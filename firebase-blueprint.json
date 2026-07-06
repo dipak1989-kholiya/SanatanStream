@@ -1,0 +1,79 @@
+{
+  "entities": {
+    "Video": {
+      "title": "Video",
+      "description": "A video entry in the library",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The video ID or URL"
+        },
+        "title": {
+          "type": "string",
+          "description": "The title of the video"
+        },
+        "description": {
+          "type": "string",
+          "description": "A short description of the video"
+        },
+        "thumbnail": {
+          "type": "string",
+          "description": "URL to the video thumbnail"
+        },
+        "category": {
+          "type": "string",
+          "description": "The category name"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["youtube", "hls"],
+          "description": "The type of video"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the video was added"
+        }
+      },
+      "required": ["id", "title", "description", "thumbnail", "category", "type", "createdAt"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "A video category",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The name of the category"
+        }
+      },
+      "required": ["name"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Application settings",
+      "type": "object",
+      "properties": {
+        "libraryTitle": {
+          "type": "string",
+          "description": "The title displayed in the sidebar"
+        }
+      }
+    }
+  },
+  "firestore": {
+    "videos": {
+      "schema": "Video",
+      "description": "Collection of all shared videos"
+    },
+    "categories": {
+      "schema": "Category",
+      "description": "Collection of video categories"
+    },
+    "settings": {
+      "schema": "Settings",
+      "description": "Global application settings"
+    }
+  }
+}

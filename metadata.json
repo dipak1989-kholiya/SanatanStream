@@ -1,0 +1,6 @@
+{
+  "name": "Livestream",
+  "description": "A refined spiritual and devotional video streaming experience with a custom media player.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
