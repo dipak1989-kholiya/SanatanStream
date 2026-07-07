@@ -2,6 +2,23 @@
 
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { auth, db } from "../firebase";
+import { 
+  onAuthStateChanged, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut,
+  User,
+  GoogleAuthProvider,
+  signInWithPopup
+} from "firebase/auth";
+import {
+  collection,
+  doc,
+  setDoc,
+  deleteDoc,
+  onSnapshot
+} from "firebase/firestore";
 import {
   Play,
   Pause,
@@ -21,7 +38,10 @@ import {
   Menu,
   Tv,
   ListVideo,
-  Info
+  Info,
+  LogIn,
+  LogOut,
+  Lock
 } from "lucide-react";
 
 // Types
@@ -32,6 +52,8 @@ interface Video {
   category: string;
   description: string;
   thumbnail: string;
+  type?: "youtube" | "hls";
+  createdAt?: any;
 }
 
 // Default pre-loaded videos for SanatanStream
@@ -74,9 +96,28 @@ const DEFAULT_CATEGORIES = ["All", "Meditation", "Mantras", "Bhajans", "Spiritua
 
 // Helper to extract YouTube video ID
 function getYouTubeId(url: string): string | null {
-  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+  if (!url) return null;
+  const patterns = [
+    /youtu\.be\/([^#\&\?]{11})/,
+    /youtube\.com\/watch\?v=([^#\&\?]{11})/,
+    /youtube\.com\/embed\/([^#\&\?]{11})/,
+    /youtube\.com\/v\/([^#\&\?]{11})/,
+    /youtube\.com\/live\/([^#\&\?]{11})/,
+    /youtube\.com\/shorts\/([^#\&\?]{11})/,
+    /youtube\.com\/.*[?&]v=([^#\&\?]{11})/
+  ];
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|live\/|shorts\/)([^#\&\?]{11})/;
   const match = url.match(regExp);
-  return match && match[2].length === 11 ? match[2] : null;
+  if (match && match[2] && match[2].length === 11) {
+    return match[2];
+  }
+  return null;
 }
 
 // Custom Player Component with precise, custom controls
@@ -560,6 +601,40 @@ function CustomPlayer({
 
 // Main page Component
 export default function Page() {
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authEmail, setAuthEmail] = useState("dipak.kholiya@gmail.com");
+  const [authPassword, setAuthPassword] = useState("Dipak@3626");
+  const [authError, setAuthError] = useState("");
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [isAdminUrl, setIsAdminUrl] = useState(false);
+
+  // Sync auth state and check admin URL query parameters
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("admin") === "true") {
+        setIsAdminUrl(true);
+      }
+    }
+
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      if (currentUser) {
+        if (currentUser.email !== "dipak.kholiya@gmail.com") {
+          signOut(auth);
+          setUser(null);
+          setAuthError("Unauthorized user. Only the owner (dipak.kholiya@gmail.com) is allowed to access the admin portal.");
+          setIsAuthModalOpen(true);
+        } else {
+          setUser(currentUser);
+        }
+      } else {
+        setUser(null);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
   const [videos, setVideos] = useState<Video[]>(DEFAULT_VIDEOS);
   const [activeVideo, setActiveVideo] = useState<Video>(DEFAULT_VIDEOS[0]);
   const [selectedCategory, setSelectedCategory] = useState("All");
@@ -601,8 +676,9 @@ export default function Page() {
   const [isFetchingDetails, setIsFetchingDetails] = useState(false);
   const [fetchSuccess, setFetchSuccess] = useState<boolean | null>(null);
 
-  // Initialize and load saved state from localStorage
+  // Initialize and load saved state from Firestore with localStorage fallback
   useEffect(() => {
+    // 1. Initial fast load from localStorage as synchronous fallback
     const saved = localStorage.getItem("sanatan_videos");
     if (saved) {
       try {
@@ -638,7 +714,108 @@ export default function Page() {
     if (savedGlow !== null) {
       setAmbientGlow(savedGlow === "true");
     }
-  }, []);
+
+    // 2. Real-time Firebase Sync
+    const unsubscribeVideos = onSnapshot(collection(db, "videos"), async (snapshot) => {
+      if (!snapshot.empty) {
+        const fetchedVideos: Video[] = [];
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          fetchedVideos.push({
+            id: doc.id,
+            title: data.title || "",
+            url: data.url || "",
+            category: data.category || "",
+            description: data.description || "",
+            thumbnail: data.thumbnail || "",
+            type: data.type || "hls",
+            createdAt: data.createdAt
+          });
+        });
+
+        // Sort by createdAt
+        fetchedVideos.sort((a, b) => {
+          const timeA = a.createdAt?.seconds || 0;
+          const timeB = b.createdAt?.seconds || 0;
+          return timeA - timeB;
+        });
+
+        setVideos(fetchedVideos);
+        localStorage.setItem("sanatan_videos", JSON.stringify(fetchedVideos));
+        
+        setActiveVideo((currentActive) => {
+          if (!currentActive && fetchedVideos.length > 0) {
+            return fetchedVideos[0];
+          }
+          if (currentActive) {
+            const found = fetchedVideos.find((v) => v.id === currentActive.id);
+            return found || fetchedVideos[0];
+          }
+          return currentActive;
+        });
+      } else {
+        // If Firestore is empty, we keep the localStorage or DEFAULT_VIDEOS
+        // And if authenticated user is the admin, seed default videos!
+        if (auth.currentUser && auth.currentUser.email === "dipak.kholiya@gmail.com") {
+          console.log("Seeding default videos to Firestore...");
+          for (const video of DEFAULT_VIDEOS) {
+            try {
+              const docRef = doc(collection(db, "videos"), video.id);
+              await setDoc(docRef, {
+                id: video.id,
+                title: video.title,
+                url: video.url,
+                category: video.category,
+                description: video.description,
+                thumbnail: video.thumbnail,
+                type: getYouTubeId(video.url) ? "youtube" : "hls",
+                createdAt: new Date()
+              });
+            } catch (err) {
+              console.error("Error seeding video:", err);
+            }
+          }
+        }
+      }
+    }, (error) => {
+      console.error("Error subscribing to Firestore videos:", error);
+    });
+
+    const unsubscribeCategories = onSnapshot(collection(db, "categories"), async (snapshot) => {
+      if (!snapshot.empty) {
+        const fetchedCats: string[] = ["All"];
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          if (data.name && data.name !== "All") {
+            fetchedCats.push(data.name);
+          }
+        });
+        setCategories(fetchedCats);
+        localStorage.setItem("sanatan_categories", JSON.stringify(fetchedCats));
+      } else {
+        // If Firestore is empty and we are admin, seed default categories!
+        if (auth.currentUser && auth.currentUser.email === "dipak.kholiya@gmail.com") {
+          console.log("Seeding default categories to Firestore...");
+          const rawCats = DEFAULT_CATEGORIES.filter((c) => c !== "All");
+          for (const cat of rawCats) {
+            try {
+              const docRef = doc(collection(db, "categories"), cat);
+              await setDoc(docRef, { name: cat });
+            } catch (err) {
+              console.error("Error seeding category:", err);
+            }
+          }
+        }
+      }
+    }, (error) => {
+      console.error("Error subscribing to Firestore categories:", error);
+    });
+
+    return () => {
+      unsubscribeVideos();
+      unsubscribeCategories();
+    };
+  }, [user]);
 
   // Toggle autoplay state & save to local storage
   const handleToggleAutoplay = () => {
@@ -713,7 +890,7 @@ export default function Page() {
   };
 
   // Add new category
-  const handleAddCategory = (e: React.FormEvent) => {
+  const handleAddCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = newCategoryInput.trim();
     if (!trimmed) return;
@@ -723,6 +900,16 @@ export default function Page() {
       return;
     }
 
+    // Save to Firestore if Admin
+    if (user && user.email === "dipak.kholiya@gmail.com") {
+      try {
+        const docRef = doc(collection(db, "categories"), trimmed);
+        await setDoc(docRef, { name: trimmed });
+      } catch (err) {
+        console.error("Error adding category to Firestore:", err);
+      }
+    }
+
     const updated = [...categories, trimmed];
     setCategories(updated);
     saveCategoriesToLocalStorage(updated);
@@ -730,7 +917,7 @@ export default function Page() {
   };
 
   // Edit category name
-  const handleEditCategory = (index: number, newName: string) => {
+  const handleEditCategory = async (index: number, newName: string) => {
     const trimmed = newName.trim();
     if (!trimmed) return;
 
@@ -742,17 +929,37 @@ export default function Page() {
       return;
     }
 
+    // Save to Firestore if Admin
+    if (user && user.email === "dipak.kholiya@gmail.com") {
+      try {
+        // Delete old doc and create new doc
+        const oldDocRef = doc(collection(db, "categories"), oldName);
+        const newDocRef = doc(collection(db, "categories"), trimmed);
+        await deleteDoc(oldDocRef);
+        await setDoc(newDocRef, { name: trimmed });
+      } catch (err) {
+        console.error("Error editing category in Firestore:", err);
+      }
+    }
+
     const updatedCats = [...categories];
     updatedCats[index] = trimmed;
     setCategories(updatedCats);
     saveCategoriesToLocalStorage(updatedCats);
 
     // Update all videos in this category
-    const updatedVideos = videos.map((v) =>
-      v.category.toLowerCase() === oldName.toLowerCase()
-        ? { ...v, category: trimmed }
-        : v
-    );
+    const updatedVideos = videos.map((v) => {
+      if (v.category.toLowerCase() === oldName.toLowerCase()) {
+        const uv = { ...v, category: trimmed };
+        // Sync each video's category in Firestore
+        if (user && user.email === "dipak.kholiya@gmail.com") {
+          const docRef = doc(collection(db, "videos"), v.id);
+          setDoc(docRef, { category: trimmed }, { merge: true }).catch(console.error);
+        }
+        return uv;
+      }
+      return v;
+    });
     setVideos(updatedVideos);
     saveToLocalStorage(updatedVideos);
 
@@ -771,7 +978,7 @@ export default function Page() {
   };
 
   // Delete category
-  const handleDeleteCategory = (index: number) => {
+  const handleDeleteCategory = async (index: number) => {
     const catToDelete = categories[index];
     if (catToDelete === "All") return;
 
@@ -788,15 +995,32 @@ export default function Page() {
         `Are you sure you want to delete category "${catToDelete}"? All videos in this category will be reassigned to "${fallbackCat}".`
       )
     ) {
+      // Delete from Firestore if Admin
+      if (user && user.email === "dipak.kholiya@gmail.com") {
+        try {
+          const docRef = doc(collection(db, "categories"), catToDelete);
+          await deleteDoc(docRef);
+        } catch (err) {
+          console.error("Error deleting category from Firestore:", err);
+        }
+      }
+
       setCategories(remainingCats);
       saveCategoriesToLocalStorage(remainingCats);
 
       // Reassign videos
-      const updatedVideos = videos.map((v) =>
-        v.category.toLowerCase() === catToDelete.toLowerCase()
-          ? { ...v, category: fallbackCat }
-          : v
-      );
+      const updatedVideos = videos.map((v) => {
+        if (v.category.toLowerCase() === catToDelete.toLowerCase()) {
+          const uv = { ...v, category: fallbackCat };
+          // Sync each video's category in Firestore
+          if (user && user.email === "dipak.kholiya@gmail.com") {
+            const docRef = doc(collection(db, "videos"), v.id);
+            setDoc(docRef, { category: fallbackCat }, { merge: true }).catch(console.error);
+          }
+          return uv;
+        }
+        return v;
+      });
       setVideos(updatedVideos);
       saveToLocalStorage(updatedVideos);
 
@@ -833,14 +1057,16 @@ export default function Page() {
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
             Categories
           </span>
-          <button
-            onClick={() => setIsManagingCategories(true)}
-            className="text-amber-400 hover:text-amber-300 text-xs flex items-center gap-1 transition-all"
-            title="Manage categories"
-          >
-            <Edit3 size={11} />
-            <span>Manage</span>
-          </button>
+          {user && (
+            <button
+              onClick={() => setIsManagingCategories(true)}
+              className="text-amber-400 hover:text-amber-300 text-xs flex items-center gap-1 transition-all"
+              title="Manage categories"
+            >
+              <Edit3 size={11} />
+              <span>Manage</span>
+            </button>
+          )}
         </div>
         {categories.map((cat) => (
           <button
@@ -876,6 +1102,73 @@ export default function Page() {
     </>
   );
 
+  // Auth Submit Handler
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!authEmail || !authPassword) return;
+
+    if (authEmail.toLowerCase().trim() !== "dipak.kholiya@gmail.com") {
+      setAuthError("Unauthorized user. Only the owner (dipak.kholiya@gmail.com) is allowed to access the admin portal.");
+      return;
+    }
+
+    setIsAuthLoading(true);
+    setAuthError("");
+
+    try {
+      await signInWithEmailAndPassword(auth, authEmail, authPassword);
+      setIsAuthModalOpen(false);
+      setAuthEmail("");
+      setAuthPassword("");
+    } catch (err: any) {
+      console.error("Authentication error:", err);
+      let friendlyMessage = "Authentication failed. Please check your credentials.";
+      if (err.code === "auth/invalid-credential") {
+        friendlyMessage = "Invalid email or password.";
+      } else if (err.code === "auth/email-already-in-use") {
+        friendlyMessage = "This email is already in use.";
+      } else if (err.code === "auth/weak-password") {
+        friendlyMessage = "Password should be at least 6 characters.";
+      } else if (err.code === "auth/invalid-email") {
+        friendlyMessage = "Please enter a valid email address.";
+      } else if (err.code === "auth/operation-not-allowed") {
+        friendlyMessage = "Email/Password sign-in is disabled in your Firebase console. To enable it:\n1. Go to Firebase Console > Authentication > Sign-in method.\n2. Click 'Add new provider' > 'Email/Password'.\n3. Enable and Save.\nOr sign in using Google Sign-In below!";
+      }
+      setAuthError(friendlyMessage);
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  // Google Auth Sign In Handler
+  const handleGoogleSignIn = async () => {
+    setIsAuthLoading(true);
+    setAuthError("");
+    try {
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      const loggedUser = result.user;
+      if (loggedUser && loggedUser.email !== "dipak.kholiya@gmail.com") {
+        await signOut(auth);
+        setAuthError("Unauthorized user. Only the owner (dipak.kholiya@gmail.com) is allowed to access the admin portal.");
+        setIsAuthModalOpen(true);
+      } else {
+        setIsAuthModalOpen(false);
+      }
+    } catch (err: any) {
+      console.error("Google Authentication error:", err);
+      let friendlyMessage = "Google Authentication failed. Please try again.";
+      if (err.code === "auth/popup-closed-by-user") {
+        friendlyMessage = "Sign-in popup was closed before completion.";
+      } else if (err.code === "auth/operation-not-allowed") {
+        friendlyMessage = "Google sign-in is not enabled in your Firebase project. Please enable it in the console.";
+      }
+      setAuthError(friendlyMessage);
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
   // Trigger forms initialization
   const openEditModal = (video: Video) => {
     setVideoToEdit(video);
@@ -907,7 +1200,7 @@ export default function Page() {
   };
 
   // Add video handler
-  const handleAddVideo = (e: React.FormEvent) => {
+  const handleAddVideo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formTitle || !formUrl) return;
 
@@ -917,14 +1210,34 @@ export default function Page() {
       ? formCategory
       : (availableCategories[0] || "Meditation");
 
+    const videoId = Date.now().toString();
     const newVideo: Video = {
-      id: Date.now().toString(),
+      id: videoId,
       title: formTitle,
       url: formUrl,
       category: finalCategory,
       description: formDescription || "No description provided.",
       thumbnail: formThumbnail || "https://images.unsplash.com/photo-1518241353330-0f7941c2d9b5?q=80&w=640&auto=format&fit=crop"
     };
+
+    // If logged in user is admin, save to Firestore
+    if (user && user.email === "dipak.kholiya@gmail.com") {
+      try {
+        const docRef = doc(collection(db, "videos"), videoId);
+        await setDoc(docRef, {
+          id: videoId,
+          title: newVideo.title,
+          url: newVideo.url,
+          category: newVideo.category,
+          description: newVideo.description,
+          thumbnail: newVideo.thumbnail,
+          type: getYouTubeId(newVideo.url) ? "youtube" : "hls",
+          createdAt: new Date()
+        });
+      } catch (err) {
+        console.error("Error saving video to Firestore:", err);
+      }
+    }
 
     const updated = [...videos, newVideo];
     setVideos(updated);
@@ -934,7 +1247,7 @@ export default function Page() {
   };
 
   // Edit video handler
-  const handleEditVideo = (e: React.FormEvent) => {
+  const handleEditVideo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!videoToEdit || !formTitle || !formUrl) return;
 
@@ -944,34 +1257,59 @@ export default function Page() {
       ? formCategory
       : (availableCategories[0] || "Meditation");
 
-    const updated = videos.map((v) =>
-      v.id === videoToEdit.id
-        ? {
-            ...v,
-            title: formTitle,
-            url: formUrl,
-            category: finalCategory,
-            description: formDescription,
-            thumbnail: formThumbnail || v.thumbnail
-          }
-        : v
-    );
+    const updatedVideo: Video = {
+      ...videoToEdit,
+      title: formTitle,
+      url: formUrl,
+      category: finalCategory,
+      description: formDescription,
+      thumbnail: formThumbnail || videoToEdit.thumbnail
+    };
 
+    // If logged in user is admin, update in Firestore
+    if (user && user.email === "dipak.kholiya@gmail.com") {
+      try {
+        const docRef = doc(collection(db, "videos"), videoToEdit.id);
+        await setDoc(docRef, {
+          id: videoToEdit.id,
+          title: updatedVideo.title,
+          url: updatedVideo.url,
+          category: updatedVideo.category,
+          description: updatedVideo.description,
+          thumbnail: updatedVideo.thumbnail,
+          type: getYouTubeId(updatedVideo.url) ? "youtube" : "hls",
+          createdAt: videoToEdit.createdAt || new Date()
+        }, { merge: true });
+      } catch (err) {
+        console.error("Error updating video in Firestore:", err);
+      }
+    }
+
+    const updated = videos.map((v) => (v.id === videoToEdit.id ? updatedVideo : v));
     setVideos(updated);
     saveToLocalStorage(updated);
 
     // Sync active video if it was the edited one
     if (activeVideo.id === videoToEdit.id) {
-      const matched = updated.find((v) => v.id === videoToEdit.id);
-      if (matched) setActiveVideo(matched);
+      setActiveVideo(updatedVideo);
     }
 
     setVideoToEdit(null);
   };
 
   // Delete video handler
-  const handleDeleteVideo = () => {
+  const handleDeleteVideo = async () => {
     if (!videoToDelete) return;
+
+    // If logged in user is admin, delete from Firestore
+    if (user && user.email === "dipak.kholiya@gmail.com") {
+      try {
+        const docRef = doc(collection(db, "videos"), videoToDelete.id);
+        await deleteDoc(docRef);
+      } catch (err) {
+        console.error("Error deleting video from Firestore:", err);
+      }
+    }
 
     const updated = videos.filter((v) => v.id !== videoToDelete.id);
     setVideos(updated);
@@ -1035,15 +1373,48 @@ export default function Page() {
           />
         </div>
 
-        {/* Add Button */}
-        <div>
-          <button
-            onClick={openAddModal}
-            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-semibold px-4 py-2 rounded-xl text-sm transition shadow-lg shadow-amber-500/10"
-          >
-            <Plus size={16} strokeWidth={2.5} />
-            <span className="hidden sm:inline">Add Video</span>
-          </button>
+        {/* Add/Auth Buttons */}
+        <div className="flex items-center gap-3">
+          {user ? (
+            <>
+              {/* Add Video Button */}
+              <button
+                onClick={openAddModal}
+                className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-semibold px-4 py-2 rounded-xl text-sm transition shadow-lg shadow-amber-500/10"
+              >
+                <Plus size={16} strokeWidth={2.5} />
+                <span className="hidden sm:inline">Add Video</span>
+              </button>
+
+              {/* User Avatar with Logout Button */}
+              <div className="flex items-center gap-2 bg-[#121a2a] border border-slate-700 pl-2.5 pr-3 py-1.5 rounded-xl text-xs text-slate-200">
+                <div className="w-5 h-5 rounded-full bg-amber-500/10 text-amber-400 flex items-center justify-center font-bold border border-amber-500/25">
+                  {user.email ? user.email[0].toUpperCase() : "A"}
+                </div>
+                <span className="max-w-[120px] truncate hidden md:inline-block font-medium">
+                  {user.email}
+                </span>
+                <button
+                  onClick={() => signOut(auth)}
+                  className="p-1 hover:text-rose-400 text-slate-400 transition"
+                  title="Sign Out"
+                >
+                  <LogOut size={14} />
+                </button>
+              </div>
+            </>
+          ) : isAdminUrl ? (
+            <button
+              onClick={() => {
+                setAuthError("");
+                setIsAuthModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 bg-[#121a2a] hover:bg-slate-800 border border-slate-700 active:scale-95 text-slate-200 hover:text-amber-400 px-4 py-2 rounded-xl text-sm transition shadow-md"
+            >
+              <LogIn size={14} />
+              <span>Admin Login</span>
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -1124,13 +1495,15 @@ export default function Page() {
                 {cat}
               </button>
             ))}
-            <button
-              onClick={() => setIsManagingCategories(true)}
-              className="shrink-0 px-4 py-2 rounded-full text-xs font-semibold transition border border-dashed border-amber-500/30 text-amber-400 bg-amber-500/5 hover:bg-amber-500/10 flex items-center gap-1"
-            >
-              <Plus size={12} />
-              <span>Manage</span>
-            </button>
+            {user && (
+              <button
+                onClick={() => setIsManagingCategories(true)}
+                className="shrink-0 px-4 py-2 rounded-full text-xs font-semibold transition border border-dashed border-amber-500/30 text-amber-400 bg-amber-500/5 hover:bg-amber-500/10 flex items-center gap-1"
+              >
+                <Plus size={12} />
+                <span>Manage</span>
+              </button>
+            )}
           </div>
 
           {isMobile ? (
@@ -1211,28 +1584,30 @@ export default function Page() {
                             <span>Play Stream</span>
                           </div>
                           
-                          <div className="flex gap-2">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openEditModal(vid);
-                              }}
-                              className="p-1.5 bg-slate-800/80 text-slate-400 hover:text-amber-400 rounded-lg transition border border-slate-700/50"
-                              title="Edit video metadata"
-                            >
-                              <Edit3 size={12} />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setVideoToDelete(vid);
-                              }}
-                              className="p-1.5 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 rounded-lg transition border border-rose-500/20"
-                              title="Delete video"
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          </div>
+                          {user && (
+                            <div className="flex gap-2">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openEditModal(vid);
+                                }}
+                                className="p-1.5 bg-slate-800/80 text-slate-400 hover:text-amber-400 rounded-lg transition border border-slate-700/50"
+                                title="Edit video metadata"
+                              >
+                                <Edit3 size={12} />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setVideoToDelete(vid);
+                                }}
+                                className="p-1.5 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 rounded-lg transition border border-rose-500/20"
+                                title="Delete video"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1334,20 +1709,24 @@ export default function Page() {
                             </button>
                           </div>
 
-                          <button
-                            onClick={() => openEditModal(activeVideo)}
-                            className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-400 rounded-xl border border-slate-700 transition"
-                            title="Edit current video metadata"
-                          >
-                            <Edit3 size={16} />
-                          </button>
-                          <button
-                            onClick={() => setVideoToDelete(activeVideo)}
-                            className="p-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-xl border border-rose-500/20 transition"
-                            title="Delete current video"
-                          >
-                            <Trash2 size={16} />
-                          </button>
+                          {user && (
+                            <>
+                              <button
+                                onClick={() => openEditModal(activeVideo)}
+                                className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-400 rounded-xl border border-slate-700 transition"
+                                title="Edit current video metadata"
+                              >
+                                <Edit3 size={16} />
+                              </button>
+                              <button
+                                onClick={() => setVideoToDelete(activeVideo)}
+                                className="p-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-xl border border-rose-500/20 transition"
+                                title="Delete current video"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
 
@@ -1433,26 +1812,28 @@ export default function Page() {
                           </div>
 
                           {/* Card Operations */}
-                          <div className="flex justify-end gap-1.5 mt-2 opacity-0 group-hover/card:opacity-100 transition-opacity">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openEditModal(vid);
-                              }}
-                              className="p-1 bg-slate-800/80 text-slate-400 hover:text-amber-400 rounded-lg transition border border-slate-700/50"
-                            >
-                              <Edit3 size={12} />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setVideoToDelete(vid);
-                              }}
-                              className="p-1 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 rounded-lg transition border border-rose-500/20"
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          </div>
+                          {user && (
+                            <div className="flex justify-end gap-1.5 mt-2 opacity-0 group-hover/card:opacity-100 transition-opacity">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openEditModal(vid);
+                                }}
+                                className="p-1 bg-slate-800/80 text-slate-400 hover:text-amber-400 rounded-lg transition border border-slate-700/50"
+                              >
+                                <Edit3 size={12} />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setVideoToDelete(vid);
+                                }}
+                                className="p-1 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 rounded-lg transition border border-rose-500/20"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))
@@ -1479,6 +1860,124 @@ export default function Page() {
 
       {/* --- ALL CUSTOM MODALS (Fully animated under <AnimatePresence>) --- */}
       <AnimatePresence>
+        {/* ADMIN AUTH MODAL */}
+        {isAuthModalOpen && (
+          <motion.div
+            key="auth-modal-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+          >
+            <motion.div
+              key="auth-modal-container"
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              className="bg-[#0b1120] border border-slate-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl flex flex-col relative"
+            >
+              <button
+                onClick={() => setIsAuthModalOpen(false)}
+                className="absolute top-4 right-4 p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800/55 transition"
+              >
+                <X size={18} />
+              </button>
+              <div className="flex flex-col items-center text-center mb-5">
+                <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-400 mb-3 shadow-lg shadow-amber-500/5">
+                  <Lock size={22} />
+                </div>
+                <h3 className="text-lg font-bold text-white tracking-tight">
+                  Admin Portal
+                </h3>
+                <p className="text-xs text-slate-400 mt-1 max-w-[240px]">
+                  Sign in using your owner credentials to add, edit or delete video streams.
+                </p>
+              </div>
+
+              {authError && (
+                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-2.5 rounded-xl text-xs mb-4 flex items-start gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0 mt-1.5" />
+                  <span className="flex-1 whitespace-pre-line text-left leading-relaxed">{authError}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleAuthSubmit} className="flex flex-col gap-3.5">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">Email Address</label>
+                  <input
+                    type="email"
+                    required
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    placeholder="Email Address"
+                    className="w-full bg-[#121a2a] border border-slate-700/80 rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/30 transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">Password</label>
+                  <input
+                    type="password"
+                    required
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full bg-[#121a2a] border border-slate-700/80 rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/30 transition-all"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isAuthLoading}
+                  className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-bold py-2.5 rounded-xl text-sm transition shadow-lg shadow-amber-500/15 flex items-center justify-center gap-2 mt-2"
+                >
+                  {isAuthLoading ? (
+                    <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <Lock size={14} />
+                      <span>Sign In</span>
+                    </>
+                  )}
+                </button>
+
+                <div className="relative flex py-1 items-center">
+                  <div className="flex-grow border-t border-slate-800"></div>
+                  <span className="flex-shrink mx-3 text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Or</span>
+                  <div className="flex-grow border-t border-slate-800"></div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  disabled={isAuthLoading}
+                  className="w-full bg-slate-900 hover:bg-slate-800 border border-slate-800 disabled:opacity-50 text-slate-200 font-semibold py-2.5 rounded-xl text-sm transition flex items-center justify-center gap-2 shadow-lg shadow-black/20"
+                >
+                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                    <path
+                      fill="currentColor"
+                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                    />
+                    <path
+                      fill="currentColor"
+                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                    />
+                    <path
+                      fill="currentColor"
+                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                    />
+                    <path
+                      fill="currentColor"
+                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                    />
+                  </svg>
+                  <span>Sign In with Google</span>
+                </button>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+
         {/* ADD VIDEO MODAL */}
         {isAddingVideo && (
           <motion.div
@@ -1983,25 +2482,27 @@ export default function Page() {
                 <span>Back to Library</span>
               </button>
               
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => openEditModal(activeVideo)}
-                  className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-400 rounded-xl border border-slate-700 transition"
-                  title="Edit current stream"
-                >
-                  <Edit3 size={16} />
-                </button>
-                <button
-                  onClick={() => {
-                    setVideoToDelete(activeVideo);
-                    setIsMobilePlayerOpen(false);
-                  }}
-                  className="p-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-xl border border-rose-500/20 transition"
-                  title="Delete current stream"
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
+              {user && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => openEditModal(activeVideo)}
+                    className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-400 rounded-xl border border-slate-700 transition"
+                    title="Edit current stream"
+                  >
+                    <Edit3 size={16} />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setVideoToDelete(activeVideo);
+                      setIsMobilePlayerOpen(false);
+                    }}
+                    className="p-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-xl border border-rose-500/20 transition"
+                    title="Delete current stream"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              )}
             </div>
  
              {/* Immersive Scrollable Player Area */}

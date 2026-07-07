@@ -9,9 +9,32 @@ export async function POST(req: NextRequest) {
     }
 
     // Helper to extract YouTube Video ID
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|shorts\/)([^#\&\?]*).*/;
-    const match = url.match(regExp);
-    const videoId = match && match[2].length === 11 ? match[2] : null;
+    const getYouTubeId = (rawUrl: string): string | null => {
+      if (!rawUrl) return null;
+      const patterns = [
+        /youtu\.be\/([^#\&\?]{11})/,
+        /youtube\.com\/watch\?v=([^#\&\?]{11})/,
+        /youtube\.com\/embed\/([^#\&\?]{11})/,
+        /youtube\.com\/v\/([^#\&\?]{11})/,
+        /youtube\.com\/live\/([^#\&\?]{11})/,
+        /youtube\.com\/shorts\/([^#\&\?]{11})/,
+        /youtube\.com\/.*[?&]v=([^#\&\?]{11})/
+      ];
+      for (const pattern of patterns) {
+        const match = rawUrl.match(pattern);
+        if (match && match[1]) {
+          return match[1];
+        }
+      }
+      const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|live\/|shorts\/)([^#\&\?]{11})/;
+      const match = rawUrl.match(regExp);
+      if (match && match[2] && match[2].length === 11) {
+        return match[2];
+      }
+      return null;
+    };
+
+    const videoId = getYouTubeId(url);
 
     if (!videoId) {
       return NextResponse.json({ error: "Not a valid YouTube URL" }, { status: 400 });
