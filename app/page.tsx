@@ -751,8 +751,8 @@ function CustomPlayer({
 export default function Page() {
   const [user, setUser] = useState<AdminUser | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [authEmail, setAuthEmail] = useState("dipak.kholiya@gmail.com");
-  const [authPassword, setAuthPassword] = useState("Dipak@3626");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [isAdminUrl, setIsAdminUrl] = useState(false);
@@ -773,20 +773,21 @@ export default function Page() {
         const parsed = JSON.parse(cachedAdmin);
         if (parsed && parsed.email === "dipak.kholiya@gmail.com") {
           setUser(parsed);
-          // Silently authenticate with Firebase in the background to satisfy security rules
-          signInWithEmailAndPassword(auth, "dipak.kholiya@gmail.com", "Dipak@3626").catch((err) => {
-            console.warn("Silent background firebase auth failed:", err);
-          });
         }
       } catch (e) {
         console.error("Error parsing cached admin user", e);
       }
     }
 
-    // Keep onAuthStateChanged only to sync back if Firebase gets authenticated, but don't force logouts based on it
+    // Keep onAuthStateChanged only to sync back if Firebase gets authenticated
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (currentUser && currentUser.email === "dipak.kholiya@gmail.com") {
-        setUser({ email: currentUser.email });
+        const adminUser = { email: currentUser.email };
+        setUser(adminUser);
+        localStorage.setItem("sanatan_admin_user", JSON.stringify(adminUser));
+      } else {
+        setUser(null);
+        localStorage.removeItem("sanatan_admin_user");
       }
     });
     return () => unsubscribe();
@@ -1259,34 +1260,81 @@ export default function Page() {
     </>
   );
 
+  // Helper to seed Firestore categories and default 16 videos
+  const seedFirestoreDatabase = async () => {
+    try {
+      console.log("Seeding default categories to Firestore...");
+      const rawCats = DEFAULT_CATEGORIES.filter((c) => c !== "All");
+      for (const cat of rawCats) {
+        const docRef = doc(collection(db, "categories"), cat);
+        await setDoc(docRef, { name: cat });
+      }
+
+      console.log("Seeding default videos to Firestore...");
+      for (const video of DEFAULT_VIDEOS) {
+        const docRef = doc(collection(db, "videos"), video.id);
+        await setDoc(docRef, {
+          id: video.id,
+          title: video.title,
+          url: video.url,
+          category: video.category,
+          description: video.description,
+          thumbnail: video.thumbnail,
+          type: getYouTubeId(video.url) ? "youtube" : "hls",
+          createdAt: new Date()
+        }, { merge: true });
+      }
+    } catch (err) {
+      console.error("Error during manual Firestore seeding:", err);
+      handleFirestoreError(err, OperationType.CREATE, "seeding database on admin login");
+    }
+  };
+
   // Auth Submit Handler
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!authEmail || !authPassword) return;
 
-    const emailTrimmed = authEmail.toLowerCase().trim();
-    if (emailTrimmed !== "dipak.kholiya@gmail.com" || authPassword !== "Dipak@3626") {
-      setAuthError("Unauthorized user or incorrect password. Only the owner is allowed.");
-      return;
-    }
-
-    // INSTANT LOGIN: No loading indicator showing, login immediately!
-    const staticUser = { email: "dipak.kholiya@gmail.com" };
-    setUser(staticUser);
-    localStorage.setItem("sanatan_admin_user", JSON.stringify(staticUser));
-    setIsAuthModalOpen(false);
-    setAuthEmail("");
-    setAuthPassword("");
+    setIsAuthLoading(true);
     setAuthError("");
 
-    // Silently perform Firebase Auth in the background to satisfy security rules
-    signInWithEmailAndPassword(auth, "dipak.kholiya@gmail.com", "Dipak@3626")
-      .then(() => {
-        console.log("Background firebase auth succeeded");
-      })
-      .catch((err) => {
-        console.warn("Background firebase auth failed:", err);
-      });
+    try {
+      const emailTrimmed = authEmail.toLowerCase().trim();
+      // Direct login through Firebase Auth
+      const userCredential = await signInWithEmailAndPassword(auth, emailTrimmed, authPassword);
+      
+      if (userCredential.user.email === "dipak.kholiya@gmail.com") {
+        const adminUser = { email: userCredential.user.email };
+        
+        // Trigger Firestore seeding on successful admin authentication
+        await seedFirestoreDatabase();
+
+        setUser(adminUser);
+        localStorage.setItem("sanatan_admin_user", JSON.stringify(adminUser));
+        setIsAuthModalOpen(false);
+        setAuthEmail("");
+        setAuthPassword("");
+        setAuthError("");
+      } else {
+        await signOut(auth);
+        setAuthError("Unauthorized user. Only the owner is allowed.");
+      }
+    } catch (err: any) {
+      console.error("Firebase Auth failed:", err);
+      let errorMsg = "Incorrect email or password. Please try again.";
+      if (err.code === "auth/user-not-found" || err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") {
+        errorMsg = "Incorrect email or password. Please try again.";
+      } else if (err.code === "auth/too-many-requests") {
+        errorMsg = "Too many failed login attempts. Please try again later.";
+      } else if (err.code === "auth/operation-not-allowed") {
+        errorMsg = "Email/Password sign-in is not allowed. Please enable it in the Firebase console.";
+      } else if (err.message) {
+        errorMsg = err.message;
+      }
+      setAuthError(errorMsg);
+    } finally {
+      setIsAuthLoading(false);
+    }
   };
 
   // Custom Logout Handler
@@ -1538,6 +1586,8 @@ export default function Page() {
             <button
               onClick={() => {
                 setAuthError("");
+                setAuthEmail("");
+                setAuthPassword("");
                 setIsAuthModalOpen(true);
               }}
               className="flex items-center gap-1.5 bg-[#121a2a] hover:bg-slate-800 border border-slate-700 active:scale-95 text-slate-200 hover:text-amber-400 px-4 py-2 rounded-xl text-sm transition shadow-md"
@@ -2059,10 +2109,20 @@ export default function Page() {
 
                 <button
                   type="submit"
-                  className="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-2.5 rounded-xl text-sm transition shadow-lg shadow-amber-500/15 flex items-center justify-center gap-2 mt-2"
+                  disabled={isAuthLoading}
+                  className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-bold py-2.5 rounded-xl text-sm transition shadow-lg shadow-amber-500/15 flex items-center justify-center gap-2 mt-2"
                 >
-                  <Lock size={14} />
-                  <span>Sign In</span>
+                  {isAuthLoading ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                      <span>Signing In...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Lock size={14} />
+                      <span>Sign In</span>
+                    </>
+                  )}
                 </button>
               </form>
             </motion.div>
