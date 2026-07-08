@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, doc, setDoc, collection } from 'firebase/firestore';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -148,7 +148,21 @@ const SEED_CATEGORIES = ["Meditation", "Mantras", "Bhajans", "Spiritual"];
 
 async function run() {
   try {
-    console.log("Starting unauthenticated seeding to Firestore...");
+    console.log("Authenticating with Firebase...");
+    let userCredential;
+    try {
+      userCredential = await signInWithEmailAndPassword(auth, "dipak.kholiya@gmail.com", "Dipak@3626");
+      console.log("Authentication successful! User UID:", userCredential.user.uid);
+    } catch (authErr) {
+      console.log("Sign in failed, attempting to create user instead...", authErr.code || authErr.message);
+      try {
+        userCredential = await createUserWithEmailAndPassword(auth, "dipak.kholiya@gmail.com", "Dipak@3626");
+        console.log("User created and authenticated successfully! User UID:", userCredential.user.uid);
+      } catch (createErr) {
+        console.error("Both sign-in and user creation failed:", createErr.code || createErr.message);
+        throw createErr;
+      }
+    }
 
     console.log("Seeding categories...");
     for (const cat of SEED_CATEGORIES) {
