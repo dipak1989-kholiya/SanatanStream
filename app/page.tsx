@@ -63,40 +63,184 @@ interface AdminUser {
 // Default pre-loaded videos for SanatanStream
 const DEFAULT_VIDEOS: Video[] = [
   {
-    id: "1",
-    title: "Serene Morning Raga - Flute Meditation",
-    category: "Meditation",
-    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-    thumbnail: "https://images.unsplash.com/photo-1506126613408-eca07ce68773?q=80&w=640&auto=format&fit=crop",
-    description: "A calming morning flute melody designed to ground your consciousness and invite peace into your day."
-  },
-  {
-    id: "2",
-    title: "Vedic Chanting - Ancient Cosmic Mantras",
+    id: "yt_1",
+    title: "Mahamrityunjaya Mantra - 108 Times Chanting",
     category: "Mantras",
-    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+    url: "https://www.youtube.com/watch?v=HP_9InU7Z6k",
     thumbnail: "https://images.unsplash.com/photo-1602192103300-47e66756152e?q=80&w=640&auto=format&fit=crop",
-    description: "Traditional vedic mantras chanted by experienced practitioners to elevate vibration and cleanse the energy field."
+    description: "The great death-conquering mantra of Lord Shiva, chanted 108 times for health, protection, and spiritual awakening."
   },
   {
-    id: "3",
-    title: "Sri Krishna Bhajan - Divine Aarti & Kirtan",
-    category: "Bhajans",
-    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+    id: "yt_2",
+    title: "Gayatri Mantra - Sacred Vedic Chanting",
+    category: "Mantras",
+    url: "https://www.youtube.com/watch?v=S18E70_a2sc",
     thumbnail: "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?q=80&w=640&auto=format&fit=crop",
-    description: "Joyous and devotional singing praising the divine play and teachings of Lord Krishna."
+    description: "The highly revered Gayatri Mantra, chanted with pristine Vedic pronunciation to illuminate the intellect."
   },
   {
-    id: "4",
-    title: "Himalayan Forest Sounds & Singing Bowls",
-    category: "Spiritual",
-    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+    id: "yt_3",
+    title: "Achyutam Keshavam - Beautiful Krishna Bhajan",
+    category: "Bhajans",
+    url: "https://www.youtube.com/watch?v=C7gNfIq2WRE",
+    thumbnail: "https://images.unsplash.com/photo-1506126613408-eca07ce68773?q=80&w=640&auto=format&fit=crop",
+    description: "A sweet, peaceful, and deeply devotional song dedicated to Lord Krishna and Lord Rama, perfect for daily meditation."
+  },
+  {
+    id: "yt_4",
+    title: "Shiv Tandav Stotram - Divine Energetic Chant",
+    category: "Bhajans",
+    url: "https://www.youtube.com/watch?v=v_b867S3S68",
     thumbnail: "https://images.unsplash.com/photo-1518241353330-0f7941c2d9b5?q=80&w=640&auto=format&fit=crop",
-    description: "Deep atmospheric recordings from the high Himalayas paired with sacred sound healing bowls."
+    description: "A powerful, energetic chanting of the Shiv Tandav Stotram, composed by Ravana to praise the cosmic dance of Lord Shiva."
+  },
+  {
+    id: "yt_5",
+    title: "Om Namah Shivaya - Meditative Shiva Chant",
+    category: "Meditation",
+    url: "https://www.youtube.com/watch?v=N_Sg73u95_I",
+    thumbnail: "https://images.unsplash.com/photo-1602192103300-47e66756152e?q=80&w=640&auto=format&fit=crop",
+    description: "Deep, slow chanting of the Panchakshara Shiva mantra 'Om Namah Shivaya' to ground your mind and enter deep silence."
+  },
+  {
+    id: "yt_6",
+    title: "Hanuman Chalisa - Powerful Devotional Prayer",
+    category: "Bhajans",
+    url: "https://www.youtube.com/watch?v=9_tU8m8mBv8",
+    thumbnail: "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?q=80&w=640&auto=format&fit=crop",
+    description: "A melodious and spirited singing of the Hanuman Chalisa to invoke courage, strength, and protection."
+  },
+  {
+    id: "yt_7",
+    title: "Vedic Peace Mantra - Om Shanti Shanti Shanti",
+    category: "Mantras",
+    url: "https://www.youtube.com/watch?v=M9-2A2Msh_U",
+    thumbnail: "https://images.unsplash.com/photo-1506126613408-eca07ce68773?q=80&w=640&auto=format&fit=crop",
+    description: "Ancient Shanti mantras from the Upanishads, praying for peace in the universe, the environment, and our inner self."
+  },
+  {
+    id: "yt_8",
+    title: "Hare Krishna Maha Mantra - Chanting Meditation",
+    category: "Meditation",
+    url: "https://www.youtube.com/watch?v=vVka25p3Sow",
+    thumbnail: "https://images.unsplash.com/photo-1518241353330-0f7941c2d9b5?q=80&w=640&auto=format&fit=crop",
+    description: "A soothing and ecstatic rendering of the Maha Mantra for deep bhaktyoga practice and spiritual cleansing."
+  },
+  {
+    id: "yt_9",
+    title: "Sri Vishnu Sahasranamam - 1000 Names of Vishnu",
+    category: "Mantras",
+    url: "https://www.youtube.com/watch?v=zVb826O_t-0",
+    thumbnail: "https://images.unsplash.com/photo-1602192103300-47e66756152e?q=80&w=640&auto=format&fit=crop",
+    description: "Recitation of the thousand sacred names of Lord Vishnu, bringing immense mental clarity, prosperity, and peace."
+  },
+  {
+    id: "yt_10",
+    title: "Ganesh Atharvashirsha - Powerful Ganesha Prayer",
+    category: "Mantras",
+    url: "https://www.youtube.com/watch?v=Dx86Gg6Y9F0",
+    thumbnail: "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?q=80&w=640&auto=format&fit=crop",
+    description: "The sacred Atharvashirsha text dedicated to Lord Ganesha, removing all obstacles and bringing wisdom."
+  },
+  {
+    id: "yt_11",
+    title: "Sacred Ganga Aarti Live - Rishikesh Devotion",
+    category: "Spiritual",
+    url: "https://www.youtube.com/watch?v=ZfAAnC1bV58",
+    thumbnail: "https://images.unsplash.com/photo-1506126613408-eca07ce68773?q=80&w=640&auto=format&fit=crop",
+    description: "The mesmerizing daily Ganga Aarti at Rishikesh, complete with oil lamps, Vedic chants, and divine atmosphere."
+  },
+  {
+    id: "yt_12",
+    title: "The Essence of Bhagavad Gita - Spiritual Wisdom",
+    category: "Spiritual",
+    url: "https://www.youtube.com/watch?v=vVvX96_6W-0",
+    thumbnail: "https://images.unsplash.com/photo-1518241353330-0f7941c2d9b5?q=80&w=640&auto=format&fit=crop",
+    description: "A spiritual discourse breaking down the key chapters and teachings of the Bhagavad Gita for daily life."
+  },
+  {
+    id: "yt_13",
+    title: "Ancient Rudram Chanting - Powerful Shiva Prayers",
+    category: "Mantras",
+    url: "https://www.youtube.com/watch?v=6h24r_X-vj0",
+    thumbnail: "https://images.unsplash.com/photo-1602192103300-47e66756152e?q=80&w=640&auto=format&fit=crop",
+    description: "Sri Rudram, one of the oldest sacred Vedic hymns dedicated to Lord Rudra (Shiva), for world peace and purification."
+  },
+  {
+    id: "yt_14",
+    title: "Divine flute music of Vrindavan - Deep Calm",
+    category: "Meditation",
+    url: "https://www.youtube.com/watch?v=6v4mP04_A0w",
+    thumbnail: "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?q=80&w=640&auto=format&fit=crop",
+    description: "Soothing bansuri (flute) melodies depicting the divine landscapes of Vrindavan, perfect for deep sleep and focus."
+  },
+  {
+    id: "yt_15",
+    title: "Shri Ram Chandra Kripalu Bhajman - Divine Kirtan",
+    category: "Bhajans",
+    url: "https://www.youtube.com/watch?v=0h6v8U_tLzo",
+    thumbnail: "https://images.unsplash.com/photo-1506126613408-eca07ce68773?q=80&w=640&auto=format&fit=crop",
+    description: "Goswami Tulsidas's highly popular and devotional prayer praising the compassionate and divine form of Lord Rama."
+  },
+  {
+    id: "yt_16",
+    title: "Lalitha Sahasranamam - Meditative Chant",
+    category: "Mantras",
+    url: "https://www.youtube.com/watch?v=8mBv8-3S8_g",
+    thumbnail: "https://images.unsplash.com/photo-1518241353330-0f7941c2d9b5?q=80&w=640&auto=format&fit=crop",
+    description: "The 1000 names of the Divine Mother Lalitha Tripurasundari, bringing infinite grace, health, and prosperity."
   }
 ];
 
 const DEFAULT_CATEGORIES = ["All", "Meditation", "Mantras", "Bhajans", "Spiritual"];
+
+// Firestore integration error handling helpers
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 // Helper to extract YouTube video ID
 function getYouTubeId(url: string): string | null {
@@ -785,13 +929,13 @@ export default function Page() {
                 createdAt: new Date()
               });
             } catch (err) {
-              console.error("Error seeding video:", err);
+              handleFirestoreError(err, OperationType.CREATE, `videos/${video.id}`);
             }
           }
         }
       }
     }, (error) => {
-      console.error("Error subscribing to Firestore videos:", error);
+      handleFirestoreError(error, OperationType.LIST, "videos");
     });
 
     const unsubscribeCategories = onSnapshot(collection(db, "categories"), async (snapshot) => {
@@ -815,13 +959,13 @@ export default function Page() {
               const docRef = doc(collection(db, "categories"), cat);
               await setDoc(docRef, { name: cat });
             } catch (err) {
-              console.error("Error seeding category:", err);
+              handleFirestoreError(err, OperationType.CREATE, `categories/${cat}`);
             }
           }
         }
       }
     }, (error) => {
-      console.error("Error subscribing to Firestore categories:", error);
+      handleFirestoreError(error, OperationType.LIST, "categories");
     });
 
     return () => {
@@ -919,7 +1063,7 @@ export default function Page() {
         const docRef = doc(collection(db, "categories"), trimmed);
         await setDoc(docRef, { name: trimmed });
       } catch (err) {
-        console.error("Error adding category to Firestore:", err);
+        handleFirestoreError(err, OperationType.CREATE, `categories/${trimmed}`);
       }
     }
 
@@ -951,7 +1095,7 @@ export default function Page() {
         await deleteDoc(oldDocRef);
         await setDoc(newDocRef, { name: trimmed });
       } catch (err) {
-        console.error("Error editing category in Firestore:", err);
+        handleFirestoreError(err, OperationType.UPDATE, `categories/${oldName} to ${trimmed}`);
       }
     }
 
@@ -1014,7 +1158,7 @@ export default function Page() {
           const docRef = doc(collection(db, "categories"), catToDelete);
           await deleteDoc(docRef);
         } catch (err) {
-          console.error("Error deleting category from Firestore:", err);
+          handleFirestoreError(err, OperationType.DELETE, `categories/${catToDelete}`);
         }
       }
 
@@ -1222,7 +1366,7 @@ export default function Page() {
           createdAt: new Date()
         });
       } catch (err) {
-        console.error("Error saving video to Firestore:", err);
+        handleFirestoreError(err, OperationType.CREATE, `videos/${videoId}`);
       }
     }
 
@@ -1268,7 +1412,7 @@ export default function Page() {
           createdAt: videoToEdit.createdAt || new Date()
         }, { merge: true });
       } catch (err) {
-        console.error("Error updating video in Firestore:", err);
+        handleFirestoreError(err, OperationType.UPDATE, `videos/${videoToEdit.id}`);
       }
     }
 
@@ -1294,7 +1438,7 @@ export default function Page() {
         const docRef = doc(collection(db, "videos"), videoToDelete.id);
         await deleteDoc(docRef);
       } catch (err) {
-        console.error("Error deleting video from Firestore:", err);
+        handleFirestoreError(err, OperationType.DELETE, `videos/${videoToDelete.id}`);
       }
     }
 
