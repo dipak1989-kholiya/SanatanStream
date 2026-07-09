@@ -2,23 +2,13 @@
 
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { auth, db } from "../firebase";
 import { 
-  onAuthStateChanged, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  signOut,
-  User,
-  GoogleAuthProvider,
-  signInWithPopup
-} from "firebase/auth";
-import {
-  collection,
-  doc,
-  setDoc,
-  deleteDoc,
-  onSnapshot
-} from "firebase/firestore";
+  getGoogleSheetsUrl, 
+  setGoogleSheetsUrl, 
+  fetchSheetsData, 
+  postSheetsAction,
+  GOOGLE_SHEETS_WEBAPP_URL_KEY
+} from "../sheetsApi";
 import {
   Play,
   Pause,
@@ -41,7 +31,9 @@ import {
   Info,
   LogIn,
   LogOut,
-  Lock
+  Lock,
+  Database,
+  Settings
 } from "lucide-react";
 
 // Types
@@ -204,42 +196,19 @@ enum OperationType {
   WRITE = 'write',
 }
 
-interface FirestoreErrorInfo {
+interface SheetsErrorInfo {
   error: string;
   operationType: OperationType;
   path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
-  }
 }
 
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
+function handleSheetsError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: SheetsErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map(provider => ({
-        providerId: provider.providerId,
-        email: provider.email,
-      })) || []
-    },
     operationType,
     path
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  console.error('Google Sheets DB Error: ', JSON.stringify(errInfo));
 }
 
 // Helper to extract YouTube video ID
@@ -756,6 +725,8 @@ export default function Page() {
   const [authError, setAuthError] = useState("");
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [isAdminUrl, setIsAdminUrl] = useState(false);
+  const [isSheetsModalOpen, setIsSheetsModalOpen] = useState(false);
+  const [sheetsUrlInput, setSheetsUrlInput] = useState("");
 
   // Sync auth state and check admin URL query parameters
   useEffect(() => {
@@ -778,19 +749,6 @@ export default function Page() {
         console.error("Error parsing cached admin user", e);
       }
     }
-
-    // Keep onAuthStateChanged only to sync back if Firebase gets authenticated
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      if (currentUser && currentUser.email === "dipak.kholiya@gmail.com") {
-        const adminUser = { email: currentUser.email };
-        setUser(adminUser);
-        localStorage.setItem("sanatan_admin_user", JSON.stringify(adminUser));
-      } else {
-        setUser(null);
-        localStorage.removeItem("sanatan_admin_user");
-      }
-    });
-    return () => unsubscribe();
   }, []);
 
   const [videos, setVideos] = useState<Video[]>(DEFAULT_VIDEOS);
@@ -834,7 +792,45 @@ export default function Page() {
   const [isFetchingDetails, setIsFetchingDetails] = useState(false);
   const [fetchSuccess, setFetchSuccess] = useState<boolean | null>(null);
 
-  // Initialize and load saved state from Firestore with localStorage fallback
+  // Helper to load data from Google Sheets or fallback to local
+  const loadSheetsData = async () => {
+    try {
+      const data = await fetchSheetsData();
+      if (data && data.status === "success") {
+        if (Array.isArray(data.videos)) {
+          const sortedVideos = [...data.videos].sort((a, b) => {
+            const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return timeA - timeB;
+          });
+          setVideos(sortedVideos);
+          localStorage.setItem("sanatan_videos", JSON.stringify(sortedVideos));
+
+          setActiveVideo((currentActive) => {
+            if (!currentActive && sortedVideos.length > 0) {
+              return sortedVideos[0];
+            }
+            if (currentActive) {
+              const found = sortedVideos.find((v) => v.id === currentActive.id);
+              return found || sortedVideos[0];
+            }
+            return currentActive;
+          });
+        }
+
+        if (Array.isArray(data.categories) && data.categories.length > 0) {
+          const cleanCats = data.categories.filter((c: string) => c !== "All");
+          const allCats = ["All", ...cleanCats];
+          setCategories(allCats);
+          localStorage.setItem("sanatan_categories", JSON.stringify(allCats));
+        }
+      }
+    } catch (err) {
+      console.error("Error loading Google Sheets data:", err);
+    }
+  };
+
+  // Initialize and load saved state from localStorage fallback first, then fetch live from Google Sheets
   useEffect(() => {
     // 1. Initial fast load from localStorage as synchronous fallback
     const saved = localStorage.getItem("sanatan_videos");
@@ -873,106 +869,8 @@ export default function Page() {
       setAmbientGlow(savedGlow === "true");
     }
 
-    // 2. Real-time Firebase Sync
-    const unsubscribeVideos = onSnapshot(collection(db, "videos"), async (snapshot) => {
-      if (!snapshot.empty) {
-        const fetchedVideos: Video[] = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          fetchedVideos.push({
-            id: doc.id,
-            title: data.title || "",
-            url: data.url || "",
-            category: data.category || "",
-            description: data.description || "",
-            thumbnail: data.thumbnail || "",
-            type: data.type || "hls",
-            createdAt: data.createdAt
-          });
-        });
-
-        // Sort by createdAt
-        fetchedVideos.sort((a, b) => {
-          const timeA = a.createdAt?.seconds || 0;
-          const timeB = b.createdAt?.seconds || 0;
-          return timeA - timeB;
-        });
-
-        setVideos(fetchedVideos);
-        localStorage.setItem("sanatan_videos", JSON.stringify(fetchedVideos));
-        
-        setActiveVideo((currentActive) => {
-          if (!currentActive && fetchedVideos.length > 0) {
-            return fetchedVideos[0];
-          }
-          if (currentActive) {
-            const found = fetchedVideos.find((v) => v.id === currentActive.id);
-            return found || fetchedVideos[0];
-          }
-          return currentActive;
-        });
-      } else {
-        // If Firestore is empty, we keep the localStorage or DEFAULT_VIDEOS
-        // And if authenticated user is the admin, seed default videos!
-        if (auth.currentUser && auth.currentUser.email === "dipak.kholiya@gmail.com") {
-          console.log("Seeding default videos to Firestore...");
-          for (const video of DEFAULT_VIDEOS) {
-            try {
-              const docRef = doc(collection(db, "videos"), video.id);
-              await setDoc(docRef, {
-                id: video.id,
-                title: video.title,
-                url: video.url,
-                category: video.category,
-                description: video.description,
-                thumbnail: video.thumbnail,
-                type: getYouTubeId(video.url) ? "youtube" : "hls",
-                createdAt: new Date()
-              });
-            } catch (err) {
-              handleFirestoreError(err, OperationType.CREATE, `videos/${video.id}`);
-            }
-          }
-        }
-      }
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, "videos");
-    });
-
-    const unsubscribeCategories = onSnapshot(collection(db, "categories"), async (snapshot) => {
-      if (!snapshot.empty) {
-        const fetchedCats: string[] = ["All"];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          if (data.name && data.name !== "All") {
-            fetchedCats.push(data.name);
-          }
-        });
-        setCategories(fetchedCats);
-        localStorage.setItem("sanatan_categories", JSON.stringify(fetchedCats));
-      } else {
-        // If Firestore is empty and we are admin, seed default categories!
-        if (auth.currentUser && auth.currentUser.email === "dipak.kholiya@gmail.com") {
-          console.log("Seeding default categories to Firestore...");
-          const rawCats = DEFAULT_CATEGORIES.filter((c) => c !== "All");
-          for (const cat of rawCats) {
-            try {
-              const docRef = doc(collection(db, "categories"), cat);
-              await setDoc(docRef, { name: cat });
-            } catch (err) {
-              handleFirestoreError(err, OperationType.CREATE, `categories/${cat}`);
-            }
-          }
-        }
-      }
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, "categories");
-    });
-
-    return () => {
-      unsubscribeVideos();
-      unsubscribeCategories();
-    };
+    // 2. Fetch live data from Google Sheets Web App
+    loadSheetsData();
   }, [user]);
 
   // Toggle autoplay state & save to local storage
@@ -1058,13 +956,12 @@ export default function Page() {
       return;
     }
 
-    // Save to Firestore if Admin
+    // Save to Google Sheets if Admin
     if (user && user.email === "dipak.kholiya@gmail.com") {
       try {
-        const docRef = doc(collection(db, "categories"), trimmed);
-        await setDoc(docRef, { name: trimmed });
+        await postSheetsAction("addCategory", { name: trimmed });
       } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, `categories/${trimmed}`);
+        handleSheetsError(err, OperationType.CREATE, `categories/${trimmed}`);
       }
     }
 
@@ -1087,16 +984,12 @@ export default function Page() {
       return;
     }
 
-    // Save to Firestore if Admin
+    // Save to Google Sheets if Admin
     if (user && user.email === "dipak.kholiya@gmail.com") {
       try {
-        // Delete old doc and create new doc
-        const oldDocRef = doc(collection(db, "categories"), oldName);
-        const newDocRef = doc(collection(db, "categories"), trimmed);
-        await deleteDoc(oldDocRef);
-        await setDoc(newDocRef, { name: trimmed });
+        await postSheetsAction("updateCategory", { oldName, newName: trimmed });
       } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `categories/${oldName} to ${trimmed}`);
+        handleSheetsError(err, OperationType.UPDATE, `categories/${oldName} to ${trimmed}`);
       }
     }
 
@@ -1108,13 +1001,7 @@ export default function Page() {
     // Update all videos in this category
     const updatedVideos = videos.map((v) => {
       if (v.category.toLowerCase() === oldName.toLowerCase()) {
-        const uv = { ...v, category: trimmed };
-        // Sync each video's category in Firestore
-        if (user && user.email === "dipak.kholiya@gmail.com") {
-          const docRef = doc(collection(db, "videos"), v.id);
-          setDoc(docRef, { category: trimmed }, { merge: true }).catch(console.error);
-        }
-        return uv;
+        return { ...v, category: trimmed };
       }
       return v;
     });
@@ -1153,13 +1040,12 @@ export default function Page() {
         `Are you sure you want to delete category "${catToDelete}"? All videos in this category will be reassigned to "${fallbackCat}".`
       )
     ) {
-      // Delete from Firestore if Admin
+      // Delete from Google Sheets if Admin
       if (user && user.email === "dipak.kholiya@gmail.com") {
         try {
-          const docRef = doc(collection(db, "categories"), catToDelete);
-          await deleteDoc(docRef);
+          await postSheetsAction("deleteCategory", { name: catToDelete, fallback: fallbackCat });
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `categories/${catToDelete}`);
+          handleSheetsError(err, OperationType.DELETE, `categories/${catToDelete}`);
         }
       }
 
@@ -1169,13 +1055,7 @@ export default function Page() {
       // Reassign videos
       const updatedVideos = videos.map((v) => {
         if (v.category.toLowerCase() === catToDelete.toLowerCase()) {
-          const uv = { ...v, category: fallbackCat };
-          // Sync each video's category in Firestore
-          if (user && user.email === "dipak.kholiya@gmail.com") {
-            const docRef = doc(collection(db, "videos"), v.id);
-            setDoc(docRef, { category: fallbackCat }, { merge: true }).catch(console.error);
-          }
-          return uv;
+          return { ...v, category: fallbackCat };
         }
         return v;
       });
@@ -1260,33 +1140,24 @@ export default function Page() {
     </>
   );
 
-  // Helper to seed Firestore categories and default 16 videos
-  const seedFirestoreDatabase = async () => {
+  // Helper to seed Google Sheets categories and default 16 videos
+  const seedGoogleSheetsDatabase = async () => {
     try {
-      console.log("Seeding default categories to Firestore...");
+      console.log("Seeding default categories & videos to Google Sheets...");
       const rawCats = DEFAULT_CATEGORIES.filter((c) => c !== "All");
-      for (const cat of rawCats) {
-        const docRef = doc(collection(db, "categories"), cat);
-        await setDoc(docRef, { name: cat });
-      }
-
-      console.log("Seeding default videos to Firestore...");
-      for (const video of DEFAULT_VIDEOS) {
-        const docRef = doc(collection(db, "videos"), video.id);
-        await setDoc(docRef, {
-          id: video.id,
-          title: video.title,
-          url: video.url,
-          category: video.category,
-          description: video.description,
-          thumbnail: video.thumbnail,
-          type: getYouTubeId(video.url) ? "youtube" : "hls",
-          createdAt: new Date()
-        }, { merge: true });
-      }
+      await postSheetsAction("seed", {
+        videos: DEFAULT_VIDEOS.map((v) => ({
+          ...v,
+          type: getYouTubeId(v.url) ? "youtube" : "hls",
+          createdAt: new Date().toISOString()
+        })),
+        categories: rawCats
+      });
+      // Refresh local view after seeding
+      await loadSheetsData();
     } catch (err) {
-      console.error("Error during manual Firestore seeding:", err);
-      handleFirestoreError(err, OperationType.CREATE, "seeding database on admin login");
+      console.error("Error during manual Google Sheets seeding:", err);
+      handleSheetsError(err, OperationType.CREATE, "seeding database on admin login");
     }
   };
 
@@ -1300,38 +1171,26 @@ export default function Page() {
 
     try {
       const emailTrimmed = authEmail.toLowerCase().trim();
-      // Direct login through Firebase Auth
-      const userCredential = await signInWithEmailAndPassword(auth, emailTrimmed, authPassword);
       
-      if (userCredential.user.email === "dipak.kholiya@gmail.com") {
-        const adminUser = { email: userCredential.user.email };
+      // Direct hardcoded login check (dipak.kholiya@gmail.com / Dipak@3626) without online Firebase Auth
+      if (emailTrimmed === "dipak.kholiya@gmail.com" && authPassword === "Dipak@3626") {
+        const adminUser = { email: emailTrimmed };
         
-        // Trigger Firestore seeding on successful admin authentication
-        await seedFirestoreDatabase();
-
         setUser(adminUser);
         localStorage.setItem("sanatan_admin_user", JSON.stringify(adminUser));
         setIsAuthModalOpen(false);
         setAuthEmail("");
         setAuthPassword("");
         setAuthError("");
+
+        // Trigger Google Sheets seeding on successful admin authentication
+        await seedGoogleSheetsDatabase();
       } else {
-        await signOut(auth);
-        setAuthError("Unauthorized user. Only the owner is allowed.");
+        setAuthError("Incorrect email or password. Please try again.");
       }
     } catch (err: any) {
-      console.error("Firebase Auth failed:", err);
-      let errorMsg = "Incorrect email or password. Please try again.";
-      if (err.code === "auth/user-not-found" || err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") {
-        errorMsg = "Incorrect email or password. Please try again.";
-      } else if (err.code === "auth/too-many-requests") {
-        errorMsg = "Too many failed login attempts. Please try again later.";
-      } else if (err.code === "auth/operation-not-allowed") {
-        errorMsg = "Email/Password sign-in is not allowed. Please enable it in the Firebase console.";
-      } else if (err.message) {
-        errorMsg = err.message;
-      }
-      setAuthError(errorMsg);
+      console.error("Auth failed:", err);
+      setAuthError("An unexpected error occurred during login.");
     } finally {
       setIsAuthLoading(false);
     }
@@ -1341,11 +1200,15 @@ export default function Page() {
   const handleLogout = async () => {
     localStorage.removeItem("sanatan_admin_user");
     setUser(null);
-    try {
-      await signOut(auth);
-    } catch (err) {
-      console.error("Error signing out from Firebase:", err);
-    }
+  };
+
+  // Save Google Sheets Web App URL Handler
+  const handleSaveSheetsUrl = (e: React.FormEvent) => {
+    e.preventDefault();
+    setGoogleSheetsUrl(sheetsUrlInput);
+    setIsSheetsModalOpen(false);
+    // Reload data with new URL
+    loadSheetsData();
   };
 
   // Trigger forms initialization
@@ -1399,22 +1262,16 @@ export default function Page() {
       thumbnail: formThumbnail || "https://images.unsplash.com/photo-1518241353330-0f7941c2d9b5?q=80&w=640&auto=format&fit=crop"
     };
 
-    // If logged in user is admin, save to Firestore
+    // If logged in user is admin, save to Google Sheets
     if (user && user.email === "dipak.kholiya@gmail.com") {
       try {
-        const docRef = doc(collection(db, "videos"), videoId);
-        await setDoc(docRef, {
-          id: videoId,
-          title: newVideo.title,
-          url: newVideo.url,
-          category: newVideo.category,
-          description: newVideo.description,
-          thumbnail: newVideo.thumbnail,
+        await postSheetsAction("addVideo", {
+          ...newVideo,
           type: getYouTubeId(newVideo.url) ? "youtube" : "hls",
-          createdAt: new Date()
+          createdAt: new Date().toISOString()
         });
       } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, `videos/${videoId}`);
+        handleSheetsError(err, OperationType.CREATE, `videos/${videoId}`);
       }
     }
 
@@ -1445,22 +1302,16 @@ export default function Page() {
       thumbnail: formThumbnail || videoToEdit.thumbnail
     };
 
-    // If logged in user is admin, update in Firestore
+    // If logged in user is admin, update in Google Sheets
     if (user && user.email === "dipak.kholiya@gmail.com") {
       try {
-        const docRef = doc(collection(db, "videos"), videoToEdit.id);
-        await setDoc(docRef, {
-          id: videoToEdit.id,
-          title: updatedVideo.title,
-          url: updatedVideo.url,
-          category: updatedVideo.category,
-          description: updatedVideo.description,
-          thumbnail: updatedVideo.thumbnail,
+        await postSheetsAction("addVideo", {
+          ...updatedVideo,
           type: getYouTubeId(updatedVideo.url) ? "youtube" : "hls",
-          createdAt: videoToEdit.createdAt || new Date()
-        }, { merge: true });
+          createdAt: videoToEdit.createdAt || new Date().toISOString()
+        });
       } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `videos/${videoToEdit.id}`);
+        handleSheetsError(err, OperationType.UPDATE, `videos/${videoToEdit.id}`);
       }
     }
 
@@ -1480,13 +1331,12 @@ export default function Page() {
   const handleDeleteVideo = async () => {
     if (!videoToDelete) return;
 
-    // If logged in user is admin, delete from Firestore
+    // If logged in user is admin, delete from Google Sheets
     if (user && user.email === "dipak.kholiya@gmail.com") {
       try {
-        const docRef = doc(collection(db, "videos"), videoToDelete.id);
-        await deleteDoc(docRef);
+        await postSheetsAction("deleteVideo", { id: videoToDelete.id });
       } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, `videos/${videoToDelete.id}`);
+        handleSheetsError(err, OperationType.DELETE, `videos/${videoToDelete.id}`);
       }
     }
 
@@ -1556,6 +1406,19 @@ export default function Page() {
         <div className="flex items-center gap-3">
           {user ? (
             <>
+              {/* Google Sheets URL settings button */}
+              <button
+                onClick={() => {
+                  setSheetsUrlInput(getGoogleSheetsUrl());
+                  setIsSheetsModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 bg-[#121a2a] hover:bg-[#1c293f] border border-slate-700 active:scale-95 text-slate-200 hover:text-amber-400 px-3.5 py-2 rounded-xl text-sm transition"
+                title="Google Sheets Database Settings"
+              >
+                <Database size={15} className="text-amber-400" />
+                <span className="hidden md:inline">Sheets DB Config</span>
+              </button>
+
               {/* Add Video Button */}
               <button
                 onClick={openAddModal}
@@ -2459,6 +2322,87 @@ export default function Page() {
                   Confirm Delete
                 </button>
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {/* GOOGLE SHEETS CONFIGURATION MODAL */}
+        {isSheetsModalOpen && (
+          <motion.div
+            key="sheets-config-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm overflow-y-auto"
+          >
+            <motion.div
+              key="sheets-config-container"
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              className="bg-[#0b1120] border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl flex flex-col relative my-8"
+            >
+              <button
+                onClick={() => setIsSheetsModalOpen(false)}
+                className="absolute top-4 right-4 p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800/55 transition"
+              >
+                <X size={18} />
+              </button>
+
+              <h3 className="text-lg font-bold text-white mb-1 tracking-tight flex items-center gap-2">
+                <Database size={18} className="text-amber-400" /> Google Sheets API Configuration
+              </h3>
+              <p className="text-xs text-slate-400 mb-4">
+                Configure your spreadsheet Web App endpoint to automatically save and retrieve video records.
+              </p>
+
+              <form onSubmit={handleSaveSheetsUrl} className="flex flex-col gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
+                    Google Apps Script Web App URL
+                  </label>
+                  <input
+                    type="url"
+                    placeholder="https://script.google.com/macros/s/.../exec"
+                    required
+                    value={sheetsUrlInput}
+                    onChange={(e) => setSheetsUrlInput(e.target.value)}
+                    className="w-full bg-[#121a2a] border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-all font-mono text-[11px]"
+                  />
+                </div>
+
+                <div className="bg-[#070b13] border border-slate-800/80 rounded-xl p-4 text-xs text-slate-300">
+                  <h4 className="font-bold text-slate-200 mb-2 flex items-center gap-1">
+                    <Info size={13} className="text-amber-400" /> Setup Instructions:
+                  </h4>
+                  <ol className="list-decimal pl-4 space-y-2 text-slate-400 text-[11px]">
+                    <li>Create a new Google Sheet.</li>
+                    <li>Go to <strong>Extensions &gt; Apps Script</strong>.</li>
+                    <li>Replace all code in Apps Script with the script provided in our documentation.</li>
+                    <li>Click <strong>Deploy &gt; New deployment</strong>.</li>
+                    <li>Select type: <strong>Web App</strong>.</li>
+                    <li>Execute as: <strong>Me</strong>.</li>
+                    <li>Who has access: <strong>Anyone</strong>.</li>
+                    <li>Click deploy, authorize permission, and paste the generated <strong>Web App URL</strong> above!</li>
+                  </ol>
+                </div>
+
+                <div className="flex gap-3 justify-end mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsSheetsModalOpen(false)}
+                    className="px-4 py-2 border border-slate-700 hover:bg-slate-800 text-slate-300 rounded-xl text-sm font-medium transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 rounded-xl text-sm font-semibold shadow-lg shadow-amber-500/15 active:scale-95 transition"
+                  >
+                    Save & Sync DB
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </motion.div>
         )}
