@@ -245,7 +245,9 @@ function CustomPlayer({
   onAutoplayToggle,
   ambientGlow = true,
   onAmbientGlowToggle,
-  rounded = true
+  rounded = true,
+  isMobileFullscreen = false,
+  onMobileFullscreenToggle
 }: {
   video: Video;
   onEnded?: () => void;
@@ -254,6 +256,8 @@ function CustomPlayer({
   ambientGlow?: boolean;
   onAmbientGlowToggle?: () => void;
   rounded?: boolean;
+  isMobileFullscreen?: boolean;
+  onMobileFullscreenToggle?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -686,10 +690,10 @@ function CustomPlayer({
 
                   {/* Fullscreen */}
                   <button
-                    onClick={toggleFullscreen}
+                    onClick={onMobileFullscreenToggle || toggleFullscreen}
                     className="text-slate-300 hover:text-amber-400 transition"
                   >
-                    {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                    {(isMobileFullscreen || isFullscreen) ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
                   </button>
                 </div>
               </div>
@@ -725,8 +729,6 @@ export default function Page() {
   const [authError, setAuthError] = useState("");
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [isAdminUrl, setIsAdminUrl] = useState(false);
-  const [isSheetsModalOpen, setIsSheetsModalOpen] = useState(false);
-  const [sheetsUrlInput, setSheetsUrlInput] = useState("");
 
   // Sync auth state and check admin URL query parameters
   useEffect(() => {
@@ -758,8 +760,11 @@ export default function Page() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [isMobilePlayerOpen, setIsMobilePlayerOpen] = useState(false);
+  const [isMobilePlayerFullscreen, setIsMobilePlayerFullscreen] = useState(false);
   const [autoplay, setAutoplay] = useState(true);
   const [ambientGlow, setAmbientGlow] = useState(true);
+  const [dbError, setDbError] = useState<string | null>(null);
+  const [isDbLoading, setIsDbLoading] = useState(false);
 
   // Dynamic Categories Management
   const [categories, setCategories] = useState<string[]>(DEFAULT_CATEGORIES);
@@ -792,8 +797,10 @@ export default function Page() {
   const [isFetchingDetails, setIsFetchingDetails] = useState(false);
   const [fetchSuccess, setFetchSuccess] = useState<boolean | null>(null);
 
-  // Helper to load data from Google Sheets or fallback to local
+  // Helper to load data from MongoDB Atlas
   const loadSheetsData = async () => {
+    setIsDbLoading(true);
+    setDbError(null);
     try {
       const data = await fetchSheetsData();
       if (data && data.status === "success") {
@@ -804,8 +811,6 @@ export default function Page() {
             return timeA - timeB;
           });
           setVideos(sortedVideos);
-          localStorage.setItem("sanatan_videos", JSON.stringify(sortedVideos));
-
           setActiveVideo((currentActive) => {
             if (!currentActive && sortedVideos.length > 0) {
               return sortedVideos[0];
@@ -822,43 +827,22 @@ export default function Page() {
           const cleanCats = data.categories.filter((c: string) => c !== "All");
           const allCats = ["All", ...cleanCats];
           setCategories(allCats);
-          localStorage.setItem("sanatan_categories", JSON.stringify(allCats));
         }
+      } else if (data && data.status === "missing_uri") {
+        setDbError("Database URL not configured yet (ડેટાબેઝ લિંક સેટ નથી)");
+      } else if (data && data.status === "error") {
+        setDbError(data.message || "Failed to connect to MongoDB Database.");
       }
     } catch (err) {
       console.error("Error loading Google Sheets data:", err);
+      setDbError("Failed to fetch data from database.");
+    } finally {
+      setIsDbLoading(false);
     }
   };
 
-  // Initialize and load saved state from localStorage fallback first, then fetch live from Google Sheets
+  // Initialize and load saved state from MongoDB Atlas
   useEffect(() => {
-    // 1. Initial fast load from localStorage as synchronous fallback
-    const saved = localStorage.getItem("sanatan_videos");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setVideos(parsed);
-          setActiveVideo(parsed[0]);
-        }
-      } catch (e) {
-        console.error("Error loading localStorage data", e);
-      }
-    }
-
-    const savedCats = localStorage.getItem("sanatan_categories");
-    if (savedCats) {
-      try {
-        const parsed = JSON.parse(savedCats);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const clean = parsed.filter((c: string) => c !== "All");
-          setCategories(["All", ...clean]);
-        }
-      } catch (e) {
-        console.error("Error loading categories", e);
-      }
-    }
-
     const savedAutoplay = localStorage.getItem("sanatan_autoplay");
     if (savedAutoplay !== null) {
       setAutoplay(savedAutoplay === "true");
@@ -869,7 +853,7 @@ export default function Page() {
       setAmbientGlow(savedGlow === "true");
     }
 
-    // 2. Fetch live data from Google Sheets Web App
+    // Fetch live data from MongoDB Atlas
     loadSheetsData();
   }, [user]);
 
@@ -936,15 +920,6 @@ export default function Page() {
     }
   };
 
-  // Save changes to localStorage
-  const saveToLocalStorage = (list: Video[]) => {
-    localStorage.setItem("sanatan_videos", JSON.stringify(list));
-  };
-
-  const saveCategoriesToLocalStorage = (list: string[]) => {
-    localStorage.setItem("sanatan_categories", JSON.stringify(list));
-  };
-
   // Add new category
   const handleAddCategory = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -967,7 +942,6 @@ export default function Page() {
 
     const updated = [...categories, trimmed];
     setCategories(updated);
-    saveCategoriesToLocalStorage(updated);
     setNewCategoryInput("");
   };
 
@@ -996,7 +970,6 @@ export default function Page() {
     const updatedCats = [...categories];
     updatedCats[index] = trimmed;
     setCategories(updatedCats);
-    saveCategoriesToLocalStorage(updatedCats);
 
     // Update all videos in this category
     const updatedVideos = videos.map((v) => {
@@ -1006,7 +979,6 @@ export default function Page() {
       return v;
     });
     setVideos(updatedVideos);
-    saveToLocalStorage(updatedVideos);
 
     // Sync active video category
     if (activeVideo && activeVideo.category.toLowerCase() === oldName.toLowerCase()) {
@@ -1050,7 +1022,6 @@ export default function Page() {
       }
 
       setCategories(remainingCats);
-      saveCategoriesToLocalStorage(remainingCats);
 
       // Reassign videos
       const updatedVideos = videos.map((v) => {
@@ -1060,7 +1031,6 @@ export default function Page() {
         return v;
       });
       setVideos(updatedVideos);
-      saveToLocalStorage(updatedVideos);
 
       // Sync active video
       if (activeVideo && activeVideo.category.toLowerCase() === catToDelete.toLowerCase()) {
@@ -1155,9 +1125,31 @@ export default function Page() {
       });
       // Refresh local view after seeding
       await loadSheetsData();
+      alert("Default devotional videos have been loaded successfully!\n\nડિફોલ્ટ વીડિયો લોડ થઈ ગયા છે!");
     } catch (err) {
       console.error("Error during manual Google Sheets seeding:", err);
       handleSheetsError(err, OperationType.CREATE, "seeding database on admin login");
+    }
+  };
+
+  // Helper to completely clear the MongoDB Atlas database to start completely fresh
+  const clearDatabase = async () => {
+    if (!confirm("Are you sure you want to completely clear all data from the database? This will delete all categories and videos forever.\n\nશું તમે ખરેખર ડેટાબેઝ આખો ખાલી કરવા માંગો છો? આ બધી કેટેગરી અને વીડિયો કાયમ માટે ડિલીટ કરી નાખશે.")) {
+      return;
+    }
+    try {
+      console.log("Clearing all categories and videos from MongoDB Atlas...");
+      await postSheetsAction("seed", {
+        videos: [],
+        categories: []
+      });
+      // Set local states to empty
+      setVideos([]);
+      setCategories(["All"]);
+      alert("All database data deleted successfully! You can now start adding your own custom videos and categories.\n\nબધો ડેટા સફળતાપૂર્વક ડિલીટ થઈ ગયો છે! હવે તમે તમારા પોતાના નવા વીડિયો અને કેટેગરી ઉમેરી શકો છો.");
+    } catch (err) {
+      console.error("Error clearing database:", err);
+      alert("Error clearing database. Please check your MongoDB configuration.");
     }
   };
 
@@ -1182,9 +1174,6 @@ export default function Page() {
         setAuthEmail("");
         setAuthPassword("");
         setAuthError("");
-
-        // Trigger Google Sheets seeding on successful admin authentication
-        await seedGoogleSheetsDatabase();
       } else {
         setAuthError("Incorrect email or password. Please try again.");
       }
@@ -1202,14 +1191,7 @@ export default function Page() {
     setUser(null);
   };
 
-  // Save Google Sheets Web App URL Handler
-  const handleSaveSheetsUrl = (e: React.FormEvent) => {
-    e.preventDefault();
-    setGoogleSheetsUrl(sheetsUrlInput);
-    setIsSheetsModalOpen(false);
-    // Reload data with new URL
-    loadSheetsData();
-  };
+
 
   // Trigger forms initialization
   const openEditModal = (video: Video) => {
@@ -1277,7 +1259,6 @@ export default function Page() {
 
     const updated = [...videos, newVideo];
     setVideos(updated);
-    saveToLocalStorage(updated);
     setIsAddingVideo(false);
     setActiveVideo(newVideo); // Play newly added video immediately
   };
@@ -1317,7 +1298,6 @@ export default function Page() {
 
     const updated = videos.map((v) => (v.id === videoToEdit.id ? updatedVideo : v));
     setVideos(updated);
-    saveToLocalStorage(updated);
 
     // Sync active video if it was the edited one
     if (activeVideo.id === videoToEdit.id) {
@@ -1342,7 +1322,6 @@ export default function Page() {
 
     const updated = videos.filter((v) => v.id !== videoToDelete.id);
     setVideos(updated);
-    saveToLocalStorage(updated);
 
     // If deleted video was active, switch active video
     if (activeVideo.id === videoToDelete.id) {
@@ -1406,19 +1385,6 @@ export default function Page() {
         <div className="flex items-center gap-3">
           {user ? (
             <>
-              {/* Google Sheets URL settings button */}
-              <button
-                onClick={() => {
-                  setSheetsUrlInput(getGoogleSheetsUrl());
-                  setIsSheetsModalOpen(true);
-                }}
-                className="flex items-center gap-1.5 bg-[#121a2a] hover:bg-[#1c293f] border border-slate-700 active:scale-95 text-slate-200 hover:text-amber-400 px-3.5 py-2 rounded-xl text-sm transition"
-                title="Google Sheets Database Settings"
-              >
-                <Database size={15} className="text-amber-400" />
-                <span className="hidden md:inline">Sheets DB Config</span>
-              </button>
-
               {/* Add Video Button */}
               <button
                 onClick={openAddModal}
@@ -1512,6 +1478,7 @@ export default function Page() {
 
         {/* Content Panel */}
         <main className="flex-1 p-4 md:p-6 lg:p-8 flex flex-col gap-6 max-w-7xl mx-auto overflow-x-hidden">
+
           {/* Mobile Search Bar fallback */}
           <div className="relative w-full md:hidden mb-1">
             <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -1571,6 +1538,7 @@ export default function Page() {
                       onClick={() => {
                         setActiveVideo(vid);
                         setIsMobilePlayerOpen(true);
+                        setIsMobilePlayerFullscreen(true);
                       }}
                       className={`group/card flex flex-col bg-[#0b101c]/90 border rounded-2xl overflow-hidden cursor-pointer transition-all duration-300 shadow-md shadow-black/10 ${
                         activeVideo?.id === vid.id
@@ -2326,86 +2294,7 @@ export default function Page() {
           </motion.div>
         )}
 
-        {/* GOOGLE SHEETS CONFIGURATION MODAL */}
-        {isSheetsModalOpen && (
-          <motion.div
-            key="sheets-config-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm overflow-y-auto"
-          >
-            <motion.div
-              key="sheets-config-container"
-              initial={{ scale: 0.95, y: 15 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.95, y: 15 }}
-              className="bg-[#0b1120] border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl flex flex-col relative my-8"
-            >
-              <button
-                onClick={() => setIsSheetsModalOpen(false)}
-                className="absolute top-4 right-4 p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800/55 transition"
-              >
-                <X size={18} />
-              </button>
 
-              <h3 className="text-lg font-bold text-white mb-1 tracking-tight flex items-center gap-2">
-                <Database size={18} className="text-amber-400" /> Google Sheets API Configuration
-              </h3>
-              <p className="text-xs text-slate-400 mb-4">
-                Configure your spreadsheet Web App endpoint to automatically save and retrieve video records.
-              </p>
-
-              <form onSubmit={handleSaveSheetsUrl} className="flex flex-col gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
-                    Google Apps Script Web App URL
-                  </label>
-                  <input
-                    type="url"
-                    placeholder="https://script.google.com/macros/s/.../exec"
-                    required
-                    value={sheetsUrlInput}
-                    onChange={(e) => setSheetsUrlInput(e.target.value)}
-                    className="w-full bg-[#121a2a] border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-all font-mono text-[11px]"
-                  />
-                </div>
-
-                <div className="bg-[#070b13] border border-slate-800/80 rounded-xl p-4 text-xs text-slate-300">
-                  <h4 className="font-bold text-slate-200 mb-2 flex items-center gap-1">
-                    <Info size={13} className="text-amber-400" /> Setup Instructions:
-                  </h4>
-                  <ol className="list-decimal pl-4 space-y-2 text-slate-400 text-[11px]">
-                    <li>Create a new Google Sheet.</li>
-                    <li>Go to <strong>Extensions &gt; Apps Script</strong>.</li>
-                    <li>Replace all code in Apps Script with the script provided in our documentation.</li>
-                    <li>Click <strong>Deploy &gt; New deployment</strong>.</li>
-                    <li>Select type: <strong>Web App</strong>.</li>
-                    <li>Execute as: <strong>Me</strong>.</li>
-                    <li>Who has access: <strong>Anyone</strong>.</li>
-                    <li>Click deploy, authorize permission, and paste the generated <strong>Web App URL</strong> above!</li>
-                  </ol>
-                </div>
-
-                <div className="flex gap-3 justify-end mt-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsSheetsModalOpen(false)}
-                    className="px-4 py-2 border border-slate-700 hover:bg-slate-800 text-slate-300 rounded-xl text-sm font-medium transition"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 rounded-xl text-sm font-semibold shadow-lg shadow-amber-500/15 active:scale-95 transition"
-                  >
-                    Save & Sync DB
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </motion.div>
-        )}
 
         {/* MANAGE CATEGORIES MODAL */}
         {isManagingCategories && (
@@ -2557,59 +2446,79 @@ export default function Page() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: "100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 250 }}
-            drag="y"
+            drag={isMobilePlayerFullscreen ? false : "y"}
             dragConstraints={{ top: 0, bottom: 400 }}
             dragElastic={{ top: 0.1, bottom: 0.5 }}
             onDragEnd={(event, info) => {
               if (info.offset.y > 150 || info.velocity.y > 500) {
                 setIsMobilePlayerOpen(false);
+                setIsMobilePlayerFullscreen(false);
               }
             }}
             className="fixed inset-0 z-50 bg-[#070b13] flex flex-col"
           >
             {/* Header bar */}
-            <div className="bg-[#0b101c] border-b border-slate-800 px-4 py-3 flex items-center justify-between shrink-0">
-              <button
-                onClick={() => setIsMobilePlayerOpen(false)}
-                className="flex items-center gap-1.5 text-slate-300 hover:text-amber-400 font-medium text-sm transition"
-              >
-                <X size={18} />
-                <span>Back to Library</span>
-              </button>
-              
-              {user && (
+            {!isMobilePlayerFullscreen && (
+              <div className="bg-[#0b101c] border-b border-slate-800 px-4 py-3 flex items-center justify-between shrink-0">
+                <button
+                  onClick={() => {
+                    setIsMobilePlayerOpen(false);
+                    setIsMobilePlayerFullscreen(false);
+                  }}
+                  className="flex items-center gap-1.5 text-slate-300 hover:text-amber-400 font-medium text-sm transition"
+                >
+                  <X size={18} />
+                  <span>Back to Library</span>
+                </button>
+                
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => openEditModal(activeVideo)}
-                    className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-400 rounded-xl border border-slate-700 transition"
-                    title="Edit current stream"
+                    onClick={() => setIsMobilePlayerFullscreen(true)}
+                    className="flex items-center gap-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 px-3 py-1.5 rounded-xl text-xs font-semibold transition active:scale-95"
+                    title="Enter Full Screen"
                   >
-                    <Edit3 size={16} />
+                    <Maximize2 size={13} />
+                    <span>Full Screen</span>
                   </button>
-                  <button
-                    onClick={() => {
-                      setVideoToDelete(activeVideo);
-                      setIsMobilePlayerOpen(false);
-                    }}
-                    className="p-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-xl border border-rose-500/20 transition"
-                    title="Delete current stream"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+
+                  {user && (
+                    <>
+                      <button
+                        onClick={() => openEditModal(activeVideo)}
+                        className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-400 rounded-xl border border-slate-700 transition"
+                        title="Edit current stream"
+                      >
+                        <Edit3 size={16} />
+                      </button>
+                      <button
+                        onClick={() => {
+                          setVideoToDelete(activeVideo);
+                          setIsMobilePlayerOpen(false);
+                          setIsMobilePlayerFullscreen(false);
+                        }}
+                        className="p-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-xl border border-rose-500/20 transition"
+                        title="Delete current stream"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </>
+                  )}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
  
              {/* Immersive Scrollable Player Area */}
              {/* Custom Player Wrapper - Edge-to-Edge with no border, no rounded corners, shadow below */}
-             <div className="w-full bg-slate-950 shrink-0 relative z-10">
+             <div className={isMobilePlayerFullscreen ? "fixed inset-0 z-50 bg-black flex flex-col items-center justify-center" : "w-full bg-slate-950 shrink-0 relative z-10"}>
                <CustomPlayer
                  video={activeVideo}
                  autoplay={autoplay}
                  onAutoplayToggle={handleToggleAutoplay}
                  ambientGlow={ambientGlow}
                  onAmbientGlowToggle={handleToggleAmbientGlow}
-                 rounded={false}
+                 rounded={!isMobilePlayerFullscreen}
+                 isMobileFullscreen={isMobilePlayerFullscreen}
+                 onMobileFullscreenToggle={() => setIsMobilePlayerFullscreen(!isMobilePlayerFullscreen)}
                  onEnded={() => {
                    if (autoplay) {
                      const currentIndex = filteredVideos.findIndex((v) => v.id === activeVideo.id);
@@ -2619,115 +2528,131 @@ export default function Page() {
                    }
                  }}
                />
+
+               {/* Floating Button to exit fullscreen when in mobile fullscreen */}
+               {isMobilePlayerFullscreen && (
+                 <button
+                   onClick={() => setIsMobilePlayerFullscreen(false)}
+                   className="absolute top-4 right-4 z-50 px-3.5 py-2.5 bg-black/75 hover:bg-black/90 backdrop-blur-md text-amber-400 border border-slate-700/50 rounded-2xl shadow-xl transition-all active:scale-95 flex items-center gap-1.5 text-xs font-bold"
+                 >
+                   <Minimize2 size={16} />
+                   <span>નહાની સ્ક્રીન (Small Screen)</span>
+                 </button>
+               )}
              </div>
- 
+  
              {/* Scrollable details and suggested next below */}
-             <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 bg-gradient-to-b from-[#070b13] to-[#04070d]">
-               {/* Details card below the video */}
-               <div className="bg-[#0b101c] border border-slate-800 rounded-2xl p-5 shadow-lg">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="inline-block bg-amber-500/10 border border-amber-500/20 text-amber-400 font-medium text-xs px-2.5 py-1 rounded-full">
-                    {activeVideo.category}
-                  </span>
+             {!isMobilePlayerFullscreen && (
+               <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 bg-gradient-to-b from-[#070b13] to-[#04070d]">
+                 {/* Details card below the video */}
+                 <div className="bg-[#0b101c] border border-slate-800 rounded-2xl p-5 shadow-lg">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="inline-block bg-amber-500/10 border border-amber-500/20 text-amber-400 font-medium text-xs px-2.5 py-1 rounded-full">
+                      {activeVideo.category}
+                    </span>
 
-                  {/* Autoplay & Ambient Glow setting badge/toggle for mobile view */}
-                  <div className="flex items-center gap-3">
-                    {/* Autoplay Toggle */}
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                        Autoplay
-                      </span>
-                      <button
-                        type="button"
-                        onClick={handleToggleAutoplay}
-                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                          autoplay ? "bg-amber-500" : "bg-slate-700"
-                        }`}
-                        title={autoplay ? "Autoplay is ON" : "Autoplay is OFF"}
-                      >
-                        <span
-                          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-slate-950 shadow-lg ring-0 transition duration-200 ease-in-out ${
-                            autoplay ? "translate-x-4" : "translate-x-0"
+                    {/* Autoplay & Ambient Glow setting badge/toggle for mobile view */}
+                    <div className="flex items-center gap-3">
+                      {/* Autoplay Toggle */}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          Autoplay
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleToggleAutoplay}
+                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                            autoplay ? "bg-amber-500" : "bg-slate-700"
                           }`}
-                        />
-                      </button>
-                    </div>
-
-                    {/* Ambient Glow Toggle */}
-                    <div className="flex items-center gap-1.5">
-                      <Sparkles size={11} className={ambientGlow ? "text-amber-400" : "text-slate-500"} />
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                        Glow
-                      </span>
-                      <button
-                        type="button"
-                        onClick={handleToggleAmbientGlow}
-                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                          ambientGlow ? "bg-amber-500" : "bg-slate-700"
-                        }`}
-                        title={ambientGlow ? "Glow is ON" : "Glow is OFF"}
-                      >
-                        <span
-                          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-slate-950 shadow-lg ring-0 transition duration-200 ease-in-out ${
-                            ambientGlow ? "translate-x-4" : "translate-x-0"
-                          }`}
-                        />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <h2 className="text-xl font-bold text-white leading-tight">
-                  {activeVideo.title}
-                </h2>
-                
-                <hr className="my-4 border-slate-800" />
-
-                <div className="flex items-start gap-3">
-                  <Info size={16} className="text-amber-400 shrink-0 mt-0.5" />
-                  <div className="text-sm text-slate-300 leading-relaxed">
-                    {activeVideo.description}
-                  </div>
-                </div>
-              </div>
-
-              {/* Suggested Next Streams inside Big Screen Mode */}
-              <div className="flex flex-col gap-3 mt-2 pb-8">
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5 px-1">
-                  <ListVideo size={14} className="text-amber-400" />
-                  <span>Up Next</span>
-                </h3>
-                
-                <div className="flex flex-col gap-2.5">
-                  {filteredVideos
-                    .filter((v) => v.id !== activeVideo.id)
-                    .slice(0, 4)
-                    .map((vid) => (
-                      <div
-                        key={vid.id}
-                        onClick={() => setActiveVideo(vid)}
-                        className="flex gap-3 p-2 rounded-xl bg-[#0b101c]/60 border border-slate-800/80 hover:border-slate-700 transition cursor-pointer"
-                      >
-                        <div className="relative w-24 aspect-video rounded-lg overflow-hidden shrink-0 bg-slate-950 border border-slate-800/50">
-                          <img
-                            src={vid.thumbnail}
-                            alt={vid.title}
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
+                          title={autoplay ? "Autoplay is ON" : "Autoplay is OFF"}
+                        >
+                          <span
+                            className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-slate-950 shadow-lg ring-0 transition duration-200 ease-in-out ${
+                              autoplay ? "translate-x-4" : "translate-x-0"
+                            }`}
                           />
-                        </div>
-                        <div className="flex flex-col justify-center min-w-0 flex-1">
-                          <h4 className="text-xs font-semibold text-slate-200 line-clamp-1">
-                            {vid.title}
-                          </h4>
-                          <span className="text-[10px] text-amber-400 mt-1 font-medium">
-                            {vid.category}
-                          </span>
-                        </div>
+                        </button>
                       </div>
-                    ))}
+
+                      {/* Ambient Glow Toggle */}
+                      <div className="flex items-center gap-1.5">
+                        <Sparkles size={11} className={ambientGlow ? "text-amber-400" : "text-slate-500"} />
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          Glow
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleToggleAmbientGlow}
+                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                            ambientGlow ? "bg-amber-500" : "bg-slate-700"
+                          }`}
+                          title={ambientGlow ? "Glow is ON" : "Glow is OFF"}
+                        >
+                          <span
+                            className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-slate-950 shadow-lg ring-0 transition duration-200 ease-in-out ${
+                              ambientGlow ? "translate-x-4" : "translate-x-0"
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <h2 className="text-xl font-bold text-white leading-tight">
+                    {activeVideo.title}
+                  </h2>
+                  
+                  <hr className="my-4 border-slate-800" />
+
+                  <div className="flex items-start gap-3">
+                    <Info size={16} className="text-amber-400 shrink-0 mt-0.5" />
+                    <div className="text-sm text-slate-300 leading-relaxed">
+                      {activeVideo.description}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Suggested Next Streams inside Big Screen Mode */}
+                <div className="flex flex-col gap-3 mt-2 pb-8">
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5 px-1">
+                    <ListVideo size={14} className="text-amber-400" />
+                    <span>Up Next</span>
+                  </h3>
+                  
+                  <div className="flex flex-col gap-2.5">
+                    {filteredVideos
+                      .filter((v) => v.id !== activeVideo.id)
+                      .slice(0, 4)
+                      .map((vid) => (
+                        <div
+                          key={vid.id}
+                          onClick={() => {
+                            setActiveVideo(vid);
+                            setIsMobilePlayerFullscreen(true);
+                          }}
+                          className="flex gap-3 p-2 rounded-xl bg-[#0b101c]/60 border border-slate-800/80 hover:border-slate-700 transition cursor-pointer"
+                        >
+                          <div className="relative w-24 aspect-video rounded-lg overflow-hidden shrink-0 bg-slate-950 border border-slate-800/50">
+                            <img
+                              src={vid.thumbnail}
+                              alt={vid.title}
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                            />
+                          </div>
+                          <div className="flex flex-col justify-center min-w-0 flex-1">
+                            <h4 className="text-xs font-semibold text-slate-200 line-clamp-1">
+                              {vid.title}
+                            </h4>
+                            <span className="text-[10px] text-amber-400 mt-1 font-medium">
+                              {vid.category}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
