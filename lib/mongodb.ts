@@ -5,8 +5,8 @@ let clientPromise: Promise<MongoClient> | null = null;
 
 export function getMongoClientPromise(): Promise<MongoClient> {
   const uri = process.env.MONGODB_URI;
-  if (!uri) {
-    throw new Error("MONGODB_URI environment variable is missing. Please set it in your Vercel or local .env file.");
+  if (!uri || uri.trim() === "" || uri === "undefined" || uri === "null" || (!uri.startsWith("mongodb+srv://") && !uri.startsWith("mongodb://")) || uri.includes("your-mongodb-connection-string") || uri.includes("placeholder")) {
+    throw new Error("MONGODB_URI environment variable is missing or invalid. Please set your MongoDB Atlas connection string in your Vercel or local .env file.");
   }
 
   if (clientPromise) {

@@ -3,9 +3,27 @@ import { getDb } from "../../../lib/mongodb";
 
 export const dynamic = "force-dynamic";
 
+function isInvalidUri(uri: string | undefined): boolean {
+  if (!uri) return true;
+  const cleaned = uri.trim();
+  if (cleaned === "" || cleaned === "undefined" || cleaned === "null") return true;
+  if (!cleaned.startsWith("mongodb+srv://") && !cleaned.startsWith("mongodb://")) return true;
+  if (cleaned.includes("your-mongodb-connection-string") || cleaned.includes("placeholder")) return true;
+  return false;
+}
+
 // GET handler to fetch all videos and categories from MongoDB Atlas
 export async function GET() {
   try {
+    if (isInvalidUri(process.env.MONGODB_URI)) {
+      return NextResponse.json({
+        status: "missing_uri",
+        message: "MONGODB_URI environment variable is missing or invalid. Please configure your MongoDB Atlas connection string.",
+        videos: [],
+        categories: []
+      });
+    }
+
     const db = await getDb();
     
     // Fetch categories and videos from MongoDB collections
@@ -30,16 +48,26 @@ export async function GET() {
     });
   } catch (error: any) {
     console.error("MongoDB GET Error:", error);
-    return NextResponse.json(
-      { status: "error", message: error.message || "Failed to fetch data from MongoDB" },
-      { status: 500 }
-    );
+    // Return HTTP 200 with status "error" so that client can handle it gracefully instead of crashing on a 500
+    return NextResponse.json({
+      status: "error",
+      message: error.message || "Failed to fetch data from MongoDB. Please check your MongoDB Atlas URI, password, and IP network access settings.",
+      videos: [],
+      categories: []
+    });
   }
 }
 
 // POST handler to manage CRUD actions for categories and videos
 export async function POST(req: NextRequest) {
   try {
+    if (isInvalidUri(process.env.MONGODB_URI)) {
+      return NextResponse.json({
+        status: "missing_uri",
+        message: "MONGODB_URI environment variable is missing or invalid. Please configure your MongoDB Atlas connection string."
+      });
+    }
+
     const db = await getDb();
     const payload = await req.json();
     const { action, data } = payload;
@@ -182,9 +210,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: "error", message: `Action not supported: ${action}` }, { status: 400 });
   } catch (error: any) {
     console.error("MongoDB POST Error:", error);
-    return NextResponse.json(
-      { status: "error", message: error.message || "Failed to process MongoDB request" },
-      { status: 500 }
-    );
+    return NextResponse.json({
+      status: "error",
+      message: error.message || "Failed to process MongoDB request. Please check your MongoDB Atlas URI, password, and IP network access settings."
+    });
   }
 }
