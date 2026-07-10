@@ -1,58 +1,40 @@
-// Google Sheets Database API Helper for SanatanStream
-// Replaces Firebase entirely with Google Sheets via Google Apps Script Web App
+// MongoDB Atlas Database API Helper for SanatanStream
+// Connects frontend with Next.js server-side API Routes proxying to MongoDB Atlas
 
-export const GOOGLE_SHEETS_WEBAPP_URL_KEY = "sanatan_sheets_url";
+export const GOOGLE_SHEETS_WEBAPP_URL_KEY = "sanatan_mongodb_status";
 
 export function getGoogleSheetsUrl(): string {
-  if (typeof window !== "undefined") {
-    // Check localStorage first so the user can paste/edit it directly in the UI!
-    const localUrl = localStorage.getItem(GOOGLE_SHEETS_WEBAPP_URL_KEY);
-    if (localUrl) return localUrl.trim();
-  }
-  return (process.env.NEXT_PUBLIC_GOOGLE_SHEETS_WEBAPP_URL || "").trim();
+  return "MongoDB Atlas (Online Cloud)";
 }
 
 export function setGoogleSheetsUrl(url: string) {
-  if (typeof window !== "undefined") {
-    localStorage.setItem(GOOGLE_SHEETS_WEBAPP_URL_KEY, url.trim());
-  }
+  // Placeholder to keep page.tsx compatible without crashes
 }
 
 export async function fetchSheetsData() {
-  const url = getGoogleSheetsUrl();
-  if (!url) {
-    return { status: "missing_url", videos: [], categories: [] };
-  }
   try {
-    const res = await fetch(url, {
+    const res = await fetch("/api/db", {
       method: "GET",
-      mode: "cors",
       headers: {
         "Accept": "application/json",
       },
-      // Avoid browser caching of sheets data
       cache: "no-store"
     });
     if (!res.ok) throw new Error(`HTTP error ${res.status}`);
     const data = await res.json();
     return data;
   } catch (err) {
-    console.error("Error fetching Google Sheets data:", err);
+    console.error("Error fetching MongoDB data:", err);
     return { status: "error", error: err, videos: [], categories: [] };
   }
 }
 
 export async function postSheetsAction(action: string, data: any) {
-  const url = getGoogleSheetsUrl();
-  if (!url) {
-    return { status: "missing_url" };
-  }
   try {
-    const res = await fetch(url, {
+    const res = await fetch("/api/db", {
       method: "POST",
-      mode: "cors",
       headers: {
-        "Content-Type": "text/plain;charset=utf-8", // text/plain bypasses CORS preflight perfectly for Apps Script Web Apps!
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({ action, data })
     });
@@ -60,7 +42,7 @@ export async function postSheetsAction(action: string, data: any) {
     const resJson = await res.json();
     return resJson;
   } catch (err) {
-    console.error(`Error posting ${action} to Google Sheets:`, err);
+    console.error(`Error posting ${action} to MongoDB:`, err);
     return { status: "error", error: err };
   }
 }
